@@ -1,0 +1,10 @@
+fastapi==0.163.1
+uvicorn[standard]==0.54.0
+SQLAlchemy==2.1.8
+psycopg[binary]==3.3.9
+httpx==0.28.1
+gtfs-realtime-bindings==3.0.0
+protobuf==7.36.2
+pydantic-settings==2.16.3
+tzdata==2026.6
+shapely==2.2.0
