@@ -22,7 +22,7 @@ interface Props {
 }
 
 export function StopAlternatives({ plan, itinerary, stop, crowdTolerance, useLaya, onApply, onClose, onStopsChange, onHoverStop, onPreview, onFocus }: Props) {
-  const { t, external, walkRadiusM, city, strictWalking } = useSettings()
+  const { t, external, walkRadiusM, city, walkingLogic } = useSettings()
   const [exit, setExit] = useState<StopCall | null>(null)
   const [stops, setStops] = useState<NearbyStop[] | null>(null)
   const [boarding, setBoarding] = useState<NearbyStop | null>(null)
@@ -129,7 +129,7 @@ export function StopAlternatives({ plan, itinerary, stop, crowdTolerance, useLay
     setBoarding(chosen)
     setBusy('routes')
     try {
-      const alternatives = await continueJourney(plan, itinerary, exit, chosen, crowdTolerance, excluded, useLaya, controller.signal, walkRadiusM, city, strictWalking)
+      const alternatives = await continueJourney(plan, itinerary, exit, chosen, crowdTolerance, excluded, useLaya, controller.signal, walkRadiusM, city, walkingLogic)
       if (!controller.signal.aborted) {
         if (alternatives.itineraries.length) {
           setResult(alternatives)
@@ -160,7 +160,7 @@ export function StopAlternatives({ plan, itinerary, stop, crowdTolerance, useLay
     setBusy('routes')
     try {
       const alternatives = await planJourney(
-        plan.origin, plan.destination, plan.departure, controller.signal,         crowdTolerance, excluded, useLaya, city, strictWalking,
+        plan.origin, plan.destination, plan.departure, controller.signal,         crowdTolerance, excluded, useLaya, city, walkingLogic,
       )
       if (!controller.signal.aborted) setResult(alternatives)
     } catch (err) {

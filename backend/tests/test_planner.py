@@ -307,3 +307,10 @@ def test_strict_plan_replans_and_keeps_public_transport(index, estimator):
     assert results
     assert any(it.rides for it in results)
     assert [it.crowd_index for it in results] == sorted(it.crowd_index for it in results)
+
+
+def test_fastest_orders_by_arrival_and_skips_crowd_variants(index, estimator):
+    results = Planner(index, estimator, use_walk_router=False, fastest=True).plan(ORIGIN, NEAR_S5, MONDAY_RUSH)
+    assert results
+    assert [it.arrival for it in results] == sorted(it.arrival for it in results)
+    assert not any("Avoids crowded stops" in note for it in results for note in it.notes)

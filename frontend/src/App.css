@@ -205,6 +205,32 @@ body {
 .settings-dialog input[type='checkbox']:disabled { opacity: 0.5; cursor: wait; }
 .settings-dialog button.primary { width: 100%; }
 
+.settings-dialog .segmented {
+  display: flex;
+  gap: 0.25rem;
+  margin-top: 0.4rem;
+  padding: 0.25rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-muted);
+}
+
+.settings-dialog .segmented button {
+  flex: 1;
+  min-height: 36px;
+  padding: 0.3rem 0.5rem;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 600;
+  box-shadow: none;
+}
+
+.settings-dialog .segmented button.selected { background: var(--brand); color: var(--on-brand); }
+.settings-dialog .segmented button:hover:not(:disabled):not(.selected) { background: var(--border); color: inherit; }
+.settings-dialog .segmented button:disabled { opacity: 0.5; cursor: wait; }
+
 .settings-dialog select,
 .stop-editor select,
 .settings-dialog input[type='number'] {

@@ -1,6 +1,7 @@
 import type { AddressSuggestion, CityStatus, CrowdAreasResponse, CrowdForecastResponse, Itinerary, MapBounds, NearbyStop, Place, PlanResponse, StopCall, TripRealtime, VehicleForecastResponse } from './types'
 import type { City } from './cities'
 import { DEFAULT_CROWD_TOLERANCE } from './settings'
+import type { WalkingLogic } from './settings'
 
 const BASE = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') ?? ''
 
@@ -43,7 +44,7 @@ export function reverseGeocode(lat: number, lon: number, signal?: AbortSignal, c
 
 export function planJourney(
   origin: Place, destination: Place, departure?: string, signal?: AbortSignal,
-  crowdTolerance = DEFAULT_CROWD_TOLERANCE, avoidStopIds: string[] = [], useLaya = false, city: City = 'gdansk', strictWalking = false,
+  crowdTolerance = DEFAULT_CROWD_TOLERANCE, avoidStopIds: string[] = [], useLaya = false, city: City = 'gdansk', walkingLogic: WalkingLogic = 'flexible',
 ): Promise<PlanResponse> {
   return getJson(
     '/api/plan',
@@ -59,7 +60,8 @@ export function planJourney(
       crowd_tolerance: crowdTolerance,
       avoid_stop_ids: avoidStopIds,
       use_laya: String(useLaya),
-      strict_walking: String(strictWalking),
+      strict_walking: String(walkingLogic === 'strict'),
+      fastest: String(walkingLogic === 'fastest'),
     },
     signal,
   )
@@ -105,7 +107,7 @@ export function nearbyStops(stop: StopCall, excludedStopIds: string[], signal?: 
 export function continueJourney(
   plan: PlanResponse, itinerary: Itinerary, exit: StopCall, boarding: NearbyStop,
   crowdTolerance: number, avoidStopIds: string[], useLaya: boolean, signal?: AbortSignal,
-  radiusM = 500, city: City = 'gdansk', strictWalking = false,
+  radiusM = 500, city: City = 'gdansk', walkingLogic: WalkingLogic = 'flexible',
 ): Promise<PlanResponse> {
   const legIndex = itinerary.legs.findIndex(leg => leg.stops.includes(exit))
   if (legIndex < 0) throw new Error('The exit stop is not part of the selected route')
@@ -123,7 +125,7 @@ export function continueJourney(
       city: plan.city, origin: plan.origin, destination: plan.destination, departure: plan.departure,
       prefix_rides: prefixRides, exit_stop_id: exit.stop_id, boarding_stop_id: boarding.stop_id,
       avoid_stop_ids: avoidStopIds, crowd_tolerance: crowdTolerance, use_laya: useLaya,
-      walk_radius_m: radiusM, strict_walking: strictWalking,
+      walk_radius_m: radiusM, strict_walking: walkingLogic === 'strict', fastest: walkingLogic === 'fastest',
     }),
   })
 }

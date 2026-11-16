@@ -28,8 +28,12 @@ const polish = {
   'Walking logic': 'Logika pieszych odcinków',
   'Flexible': 'Elastyczna',
   'Strict': 'Ścisła',
-  'Flexible: standard planning. Strict: walking never crosses high or very high crowded areas; routes may be longer or unavailable. Applies to new searches.':
-      'Elastyczna: standardowe planowanie. Ścisła: piesze odcinki nigdy nie prowadzą przez mocno lub bardzo mocno zatłoczone obszary; trasy mogą być dłuższe lub niedostępne. Dotyczy nowych wyszukiwań.',
+  'Fastest': 'Najszybsza',
+  'Flexible: standard crowd-aware planning. Applies to new searches.': 'Elastyczna: standardowe planowanie z uwzględnieniem tłoku. Dotyczy nowych wyszukiwań.',
+  'Strict: walking never crosses high or very high crowded areas; routes may be longer or unavailable. Applies to new searches.':
+      'Ścisła: piesze odcinki nigdy nie prowadzą przez mocno lub bardzo mocno zatłoczone obszary; trasy mogą być dłuższe lub niedostępne. Dotyczy nowych wyszukiwań.',
+  'Fastest: ignores crowd levels and returns the quickest routes. Applies to new searches.':
+      'Najszybsza: pomija poziom tłoku i zwraca najszybsze trasy. Dotyczy nowych wyszukiwań.',
   'General': 'Ogólne',
   'Language': 'Język',
   'English': 'English',

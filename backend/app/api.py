@@ -245,6 +245,7 @@ def plan(
     avoid_stop_ids: Annotated[list[str] | None, Query(max_length=20)] = None,
     use_laya: bool = False,
     strict_walking: bool = False,
+    fastest: bool = False,
 ) -> PlanResponse:
     s = get_settings()
     tz = ZoneInfo(s.timezone)
@@ -260,9 +261,10 @@ def plan(
     planner = Planner(
         index, estimator, realtime.trip_updates(),
         use_walk_router=s.walking_router_enabled, strict_walking=strict_walking,
+                fastest=fastest,
     )
     origin, destination = Place(from_lat, from_lon, from_name), Place(to_lat, to_lon, to_name)
-    itineraries = (planner.plan_strict if strict_walking else planner.plan)(
+    itineraries = (planner.plan_strict if strict_walking and not fastest else planner.plan)(
         origin, destination, when, max_results=max_results,
         crowd_tolerance=crowd_tolerance, avoid_stop_ids=avoided,
     )
@@ -371,6 +373,7 @@ def continue_journey(request: ContinueJourneyRequest, session: SessionDep, index
     planner = Planner(
         index, estimator, realtime.trip_updates(),
         use_walk_router=s.walking_router_enabled, strict_walking=request.strict_walking,
+        fastest=request.fastest,
     )
     origin = Place(request.origin.lat, request.origin.lon, request.origin.name)
     destination = Place(request.destination.lat, request.destination.lon, request.destination.name)

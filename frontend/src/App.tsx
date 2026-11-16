@@ -182,7 +182,7 @@ function JourneyPlanner({ settings, onSettingsChange, appSettingsError, cityData
     setError(null)
     try {
       const departure = leaveAt ? new Date(leaveAt).toISOString() : undefined
-      const result = await planJourney(origin, destination, departure, controller.signal, crowdTolerance, [], layaPreference.value, settings.city, settings.strictWalking)
+      const result = await planJourney(origin, destination, departure, controller.signal, crowdTolerance, [], layaPreference.value, settings.city, settings.walkingLogic)
       if (controller.signal.aborted) return
       if (result.city !== settings.city) throw new Error('The returned journey belongs to a different city')
       setPlan(result)

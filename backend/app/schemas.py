@@ -123,6 +123,7 @@ class ContinueJourneyRequest(BaseModel):
     crowd_tolerance: int = Field(default=DEFAULT_CROWD_TOLERANCE, ge=0, le=100)
     use_laya: bool = False
     strict_walking: bool = False
+    fastest: bool = False
     walk_radius_m: int = Field(default=500, ge=100, le=20000)
 
 

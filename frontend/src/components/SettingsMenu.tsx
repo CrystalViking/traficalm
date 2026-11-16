@@ -1,8 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent, ReactNode } from 'react'
-import type { AppSettings } from '../settings'
+import type { AppSettings, WalkingLogic } from '../settings'
 import { useSettings } from '../settings'
 import { CITIES, isCity } from '../cities'
+
+const WALKING_LABELS = { flexible: 'Flexible', strict: 'Strict', fastest: 'Fastest' } as const
+const WALKING_HINTS = {
+  flexible: 'Flexible: standard crowd-aware planning. Applies to new searches.',
+  strict: 'Strict: walking never crosses high or very high crowded areas; routes may be longer or unavailable. Applies to new searches.',
+  fastest: 'Fastest: ignores crowd levels and returns the quickest routes. Applies to new searches.',
+} as const
 
 interface Props {
   settings: AppSettings
@@ -81,15 +88,17 @@ export function SettingsMenu({ settings, onChange, onClose, crowdTolerance, useL
             <p className="hint">{t('Stops above this level are highlighted. Changing tolerance does not replace your selected route.')}</p>
           </div>
           <div className="setting-item">
-            <label className="setting-row">
-              <span className="setting-title">{t('Walking logic')}</span>
-              <select aria-label={t('Walking logic')} value={settings.strictWalking ? 'strict' : 'flexible'} disabled={planning}
-                onChange={event => onChange({ ...settings, strictWalking: event.target.value === 'strict' })}>
-                <option value="flexible">{t('Flexible')}</option>
-                <option value="strict">{t('Strict')}</option>
-              </select>
-            </label>
-            <p className="hint">{t('Flexible: standard planning. Strict: walking never crosses high or very high crowded areas; routes may be longer or unavailable. Applies to new searches.')}</p>
+            <span className="setting-title" id="walking-logic-label">{t('Walking logic')}</span>
+            <div className="segmented" role="radiogroup" aria-labelledby="walking-logic-label">
+              {(['flexible', 'strict', 'fastest'] as WalkingLogic[]).map(mode => (
+                <button key={mode} type="button" role="radio" aria-checked={settings.walkingLogic === mode} disabled={planning}
+                  className={settings.walkingLogic === mode ? 'selected' : ''}
+                  onClick={() => onChange({ ...settings, walkingLogic: mode })}>
+                  {t(WALKING_LABELS[mode])}
+                </button>
+              ))}
+            </div>
+            <p className="hint">{t(WALKING_HINTS[settings.walkingLogic])}</p>
           </div>
           <div className="setting-item">
             <label className="setting-row">
@@ -137,12 +146,6 @@ export function SettingsMenu({ settings, onChange, onClose, crowdTolerance, useL
             <label className="setting-row">
               <span className="setting-title">{t('Dark Mode')}</span>
               <input type="checkbox" checked={settings.darkMode} onChange={event => onChange({ ...settings, darkMode: event.target.checked })} />
-            </label>
-          </div>
-          <div className="setting-item">
-            <label className="setting-row">
-              <span className="setting-title">{t('Show forecast time slider')}</span>
-              <input type="checkbox" checked={settings.timeSlider} onChange={event => onChange({ ...settings, timeSlider: event.target.checked })} />
             </label>
           </div>
         </section>

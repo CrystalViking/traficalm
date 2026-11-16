@@ -140,7 +140,9 @@ class Planner:
         trip_updates: dict[str, TripUpdate] | None = None,
         use_walk_router: bool = True,
         strict_walking: bool = False,
+        fastest: bool = False,
     ) -> None:
+        self.fastest = fastest
         self.index = index
         self.crowd = estimator
         self.trip_updates = trip_updates or {}
@@ -170,6 +172,11 @@ class Planner:
             cached = self.index.nearby_stops(stop.lat, stop.lon, radius)
             self._transfer_cache[stop_id] = cached
         return cached
+
+    def _rank(self, it: Itinerary) -> tuple:
+        if self.fastest:
+            return (it.arrival, it.transfers, it.crowd_index)
+        return (it.crowd_index, it.arrival, it.transfers)
 
     # ------------------------------------------------------------------ search
     def plan_strict(
@@ -265,7 +272,7 @@ class Planner:
 
         # Crowd-avoiding variants
         for it in [*itineraries.values(), *seeds]:
-            for rides in self._avoidance_variants(it):
+            for rides in ([] if self.fastest and not self._blocked else self._avoidance_variants(it)):
                 if rides in itineraries:
                     continue
                 variant = self.build(rides, crowd_avoiding=True)
@@ -286,7 +293,7 @@ class Planner:
                 walk.notes.append("Walking only – no public transport")
                 itineraries[()] = walk
 
-        ranked = sorted(itineraries.values(), key=lambda i: (i.crowd_index, i.arrival))
+        ranked = sorted(itineraries.values(), key=self._rank)
         if boarding_stop_id is not None:
             ranked = [
                 it for it in ranked if it.rides
@@ -296,10 +303,10 @@ class Planner:
             ranked = ranked[: max_results * 2]
         # Refine with the Laya decision model (single batched call) and re-rank.
         legs = [leg.crowd for it in ranked for leg in it.legs if leg.mode == "transit"]
-        if self.crowd.refine_with_laya(legs):
+        if not self.fastest and self.crowd.refine_with_laya(legs):
             for it in ranked:
                 it.crowd_index = itinerary_crowd([(leg.crowd, leg.duration_s) for leg in it.legs])
-        ranked = sorted(ranked, key=lambda i: (i.crowd_index, i.arrival, i.transfers))
+        ranked = sorted(ranked, key=self._rank)
         final: list[Itinerary] = []
         for it in ranked:
             if self.use_walk_router or self.strict_walking:
@@ -394,7 +401,7 @@ class Planner:
         )
         bridge.geometry, bridge.walk_routed = list(path.geometry), path.routed
         ready = exit_time + timedelta(seconds=max(path.duration_s, self.settings.min_transfer_seconds))
-        onward_planner = Planner(self.index, self.crowd, self.trip_updates, self.use_walk_router, self.strict_walking)
+        onward_planner = Planner(self.index, self.crowd, self.trip_updates,         self.use_walk_router, self.strict_walking, self.fastest)
         onward = onward_planner.plan(
             board_place, destination, ready, crowd_tolerance=crowd_tolerance,
             avoid_stop_ids=avoid_stop_ids, boarding_stop_id=boarding_stop_id, avoid_stop_areas=False,
@@ -414,7 +421,7 @@ class Planner:
                 (*prefix_rides, *continuation.rides), legs,
                 itinerary_crowd([(leg.crowd, leg.duration_s) for leg in legs]), True, notes,
             ))
-        return sorted(results, key=lambda it: (it.crowd_index, it.arrival))
+        return sorted(results, key=self._rank)
 
     def _rides_allowed(self, rides: tuple[Ride, ...]) -> bool:
         return all(
