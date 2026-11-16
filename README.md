@@ -6,6 +6,8 @@ It plans public-transport journeys from **A** to **B** in **Gdańsk, Poznań, Wr
 route passes through a very busy place (e.g. the main station or the city centre) it also suggests
 variants that board/alight at quieter stops and walk around the crowded part.
 
+![TrafiCalm demo: settings, planning a route, avoiding a crowded stop and picking an alternative](docs/demo.gif)
+
 | Layer | Technology |
 | --- | --- |
 | Frontend | React + TypeScript (Vite), Leaflet / react-leaflet with OpenStreetMap tiles |
