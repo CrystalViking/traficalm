@@ -6,6 +6,8 @@ import math
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
+import numpy as np
+
 from ..geo import haversine_m
 from .hotspots import Hotspot
 
@@ -148,6 +150,28 @@ def extract(
     if stop_load >= 0.85:
         f.reasons.append("heavily used stop")
     return f
+
+
+def crowd_ceilings(
+    when: datetime, hotspots: tuple[Hotspot, ...], events: list[EventInfo],
+    hotspot_m: np.ndarray, event_m: np.ndarray,
+) -> np.ndarray:
+    """Upper bounds of point_crowd(extract(...)) without stop load at places whose distances to each hotspot
+    and event (columns of hotspot_m and event_m) are at least the given metres."""
+    # Time factors, place activity and event sizes are at most 1, and point_crowd never decreases when a
+    # feature grows.
+    weight = np.array([hs.weight for hs in hotspots]).reshape(1, -1)
+    radius = np.array([hs.radius_m for hs in hotspots]).reshape(1, -1)
+    near = weight * np.exp(-((hotspot_m / radius) ** 2))
+    hotspot = np.where(hotspot_m <= radius * 3, near, 0.0).max(axis=1, initial=0.0)
+    activity = near.max(axis=1, initial=0.0)
+    spatial = np.exp(-((event_m / np.array([[max(ev.radius_m, 50) for ev in events]])) ** 2))
+    event = np.minimum(1.0, np.where(spatial >= 0.01, spatial, 0.0).sum(axis=1))
+    peak = peak_factor(when)
+    return np.array([
+        point_crowd(CrowdFeatures(peak=peak, hotspot=h, event=e, activity=a))
+        for h, e, a in zip(hotspot.tolist(), event.tolist(), activity.tolist())
+    ])
 
 
 # --------------------------------------------------------------------------- rule-based model

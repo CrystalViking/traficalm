@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { planJourney, prepareCity, tripRealtime } from './api'
 import { AddressInput } from './components/AddressInput'
+import { DateTimePicker } from './components/DateTimePicker'
 import { ItineraryDetails } from './components/ItineraryDetails'
 import { RouteMap } from './components/RouteMap'
 import { RouteOptions } from './components/RouteOptions'
@@ -65,7 +66,8 @@ export default function App() {
   useEffect(() => {
     document.documentElement.lang = settings.value.language
     document.documentElement.dataset.theme = settings.value.darkMode ? 'dark' : 'light'
-  }, [settings.value.language, settings.value.darkMode])
+    document.documentElement.dataset.view = settings.value.mobileView ? 'mobile' : 'desktop'
+  }, [settings.value.language, settings.value.darkMode, settings.value.mobileView])
   const saveSettings = (value: AppSettings) => {
     try {
       localStorage.setItem(SETTINGS_KEY, JSON.stringify(value))
@@ -170,6 +172,7 @@ function JourneyPlanner({ settings, onSettingsChange, appSettingsError, cityData
   const submit = async (event: FormEvent) => {
     event.preventDefault()
     if (!cityReady) return
+    const localDeparture = leaveAt
     if (!origin || !destination) {
       setError('Choose both a starting point (A) and a destination (B) from the suggestions or use GPS.')
       return
@@ -181,7 +184,7 @@ function JourneyPlanner({ settings, onSettingsChange, appSettingsError, cityData
     setLoading(true)
     setError(null)
     try {
-      const departure = leaveAt ? new Date(leaveAt).toISOString() : undefined
+      const departure = new Date(localDeparture).toISOString()
       const result = await planJourney(origin, destination, departure, controller.signal, crowdTolerance, [], layaPreference.value, settings.city, settings.walkingLogic)
       if (controller.signal.aborted) return
       if (result.city !== settings.city) throw new Error('The returned journey belongs to a different city')
@@ -298,7 +301,7 @@ function JourneyPlanner({ settings, onSettingsChange, appSettingsError, cityData
             </button>
             <AddressInput key={`${settings.city}-destination`} label={t('To (B)')} placeholder={t('Start typing an address…')} value={destination} onChange={setDestination} />
             <label htmlFor="leave-at">{t('Leave at')}</label>
-            <input id="leave-at" type="datetime-local" value={leaveAt} onChange={(e) => setLeaveAt(e.target.value)} />
+            <DateTimePicker id="leave-at" value={leaveAt} onChange={setLeaveAt} />
             {loading && layaPreference.value && (
               <p className="hint" role="status">{t('Laya CPU scoring can take tens of seconds while comparing rides.')}</p>
             )}
@@ -361,7 +364,11 @@ function JourneyPlanner({ settings, onSettingsChange, appSettingsError, cityData
         {t('Timetables & real-time data:')} {cityData
           ? <a href={cityData.source_url}>{cityData.agency} ({cityData.license})</a> : CITIES[settings.city].name}
         {cityData?.imported_at && <> · {t('Processed timetable · imported {date}', {
-          date: new Date(cityData.imported_at).toLocaleString(settings.language === 'pl' ? 'pl-PL' : 'en-GB'),
+          date: new Date(cityData.imported_at).toLocaleString(settings.language === 'pl' ? 'pl-PL' : 'en-GB', {
+            dateStyle: 'short',
+            timeStyle: 'short',
+            hourCycle: settings.timeFormat === '24h' ? 'h23' : 'h12',
+          }),
         })}</>}
         {cityData?.attributions.map((attribution, index) => <span key={index}>
           {' · '}{attribution.attribution_url && /^https?:\/\//i.test(attribution.attribution_url)

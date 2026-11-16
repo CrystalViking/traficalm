@@ -137,6 +137,19 @@ export function SettingsMenu({ settings, onChange, onClose, crowdTolerance, useL
           </div>
           <div className="setting-item">
             <label className="setting-row">
+              <span className="setting-title">{t('Time format')}</span>
+              <select aria-label={t('Time format')} value={settings.timeFormat} onChange={event => {
+                if (event.target.value === '24h' || event.target.value === '12h') {
+                  onChange({ ...settings, timeFormat: event.target.value })
+                }
+              }}>
+                <option value="24h">{t('24-hour')}</option>
+                <option value="12h">{t('12-hour')}</option>
+              </select>
+            </label>
+          </div>
+          <div className="setting-item">
+            <label className="setting-row">
               <span className="setting-title">{t('Use GPS')}</span>
               <input type="checkbox" checked={settings.gps} onChange={event => onChange({ ...settings, gps: event.target.checked })} />
             </label>
@@ -146,6 +159,12 @@ export function SettingsMenu({ settings, onChange, onClose, crowdTolerance, useL
             <label className="setting-row">
               <span className="setting-title">{t('Dark Mode')}</span>
               <input type="checkbox" checked={settings.darkMode} onChange={event => onChange({ ...settings, darkMode: event.target.checked })} />
+            </label>
+          </div>
+          <div className="setting-item">
+            <label className="setting-row">
+              <span className="setting-title">{t('Mobile view')}</span>
+              <input type="checkbox" checked={settings.mobileView} onChange={event => onChange({ ...settings, mobileView: event.target.checked })} />
             </label>
           </div>
         </section>

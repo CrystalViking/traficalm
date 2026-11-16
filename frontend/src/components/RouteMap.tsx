@@ -52,7 +52,7 @@ function flowArrow(a: Place, b: Place): LatLngTuple[] {
 }
 
 function CrowdOverlay({ at, itinerary }: { at: string; itinerary: Itinerary | null }) {
-  const { t, external, city } = useSettings()
+  const { t, external, city, timeFormat, language } = useSettings()
   const map = useMap()
   const [prediction, setPrediction] = useState<{ at: string; routeKey: string; data: CrowdForecastResponse } | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -135,7 +135,7 @@ function CrowdOverlay({ at, itinerary }: { at: string; itinerary: Itinerary | nu
         <span><i style={{ background: crowdColor(65) }} /> {t('High (50–74%)')}</span>
         <span><i style={{ background: crowdColor(90) }} /> {t('Very high (75–100%)')}</span>
         <small>{t('High areas always shown; other areas within 500 m of your route.')}</small>
-        {visible && <p>{t('Forecast: {from}–{to}', { from: formatTime(visible.at), to: formatTime(visible.until) })}</p>}
+        {visible && <p>{t('Forecast: {from}–{to}', { from: formatTime(visible.at, timeFormat, language), to: formatTime(visible.until, timeFormat, language) })}</p>}
         <small>{t('Purple arrows infer demand shifts over 60 minutes, not measured pedestrian paths or live crowd counts.')}</small>
         {visible?.changes.slice(0, 5).map(change => (
           <small key={`${change.lat}-${change.lon}`}>{change.name}: {change.current_index}% → {change.predicted_index}%</small>
@@ -150,7 +150,7 @@ function CrowdOverlay({ at, itinerary }: { at: string; itinerary: Itinerary | nu
 }
 
 function VehiclePredictions({ at, itinerary }: { at: string; itinerary: Itinerary }) {
-  const { t, external, city } = useSettings()
+  const { t, external, city, timeFormat, language } = useSettings()
   const [snapshot, setSnapshot] = useState<{ key: string; positions: VehiclePrediction[]; error: string | null } | null>(null)
   const key = JSON.stringify([at, itinerary.id, itinerary.legs.map(leg => leg.service_date)])
   useEffect(() => {
@@ -177,7 +177,7 @@ function VehiclePredictions({ at, itinerary }: { at: string; itinerary: Itinerar
         {current?.positions.map(position => (
           <CircleMarker key={`${position.trip_id}-${position.at}`} center={[position.lat, position.lon]} radius={5}
             pathOptions={{ color: 'var(--ai)', weight: 2, fillOpacity: 0.15, dashArray: '3 3' }}>
-            <Tooltip>{t('Predicted {line} at {time} (not live GPS)', { line: position.name, time: formatTime(position.at) })}</Tooltip>
+            <Tooltip>{t('Predicted {line} at {time} (not live GPS)', { line: position.name, time: formatTime(position.at, timeFormat, language) })}</Tooltip>
           </CircleMarker>
         ))}
       </Pane>
@@ -187,18 +187,18 @@ function VehiclePredictions({ at, itinerary }: { at: string; itinerary: Itinerar
 }
 
 function TimeSlider({ at, value, onChange }: { at: string; value: number; onChange: (value: number) => void }) {
-  const { t } = useSettings()
+  const { t, timeFormat, language } = useSettings()
   const control = useMapControl()
   return (
     <div ref={control} className="forecast-time-slider">
-      <label htmlFor="map-forecast-time">{t('Forecast time: {time} · next 60 minutes', { time: formatTime(at) })}</label>
+      <label htmlFor="map-forecast-time">{t('Forecast time: {time} · next 60 minutes', { time: formatTime(at, timeFormat, language) })}</label>
       <input id="map-forecast-time" type="range" min="0" max="1440" step="15" value={value} onChange={event => onChange(Number(event.target.value))} />
       <div><span>{t('Departure / now')}</span><span>+24 h</span></div>
     </div>
   )
 }
 
-function FitBounds({ points }: { points: LatLngTuple[] }) {
+function FitBounds({ points, mobileView }: { points: LatLngTuple[], mobileView: boolean }) {
   const map = useMap()
   const key = JSON.stringify(points)
   useEffect(() => {
@@ -206,13 +206,25 @@ function FitBounds({ points }: { points: LatLngTuple[] }) {
     const fit = () => {
       if (pts.length === 1) map.setView(pts[0], 15)
       else if (pts.length > 1) map.fitBounds(pts, {
-        paddingTopLeft: [30, 30], paddingBottomRight: [30, map.getSize().x <= 800 ? map.getSize().y * 0.48 + 30 : 30],
+        paddingTopLeft: [30, 30], paddingBottomRight: [30, mobileView ? map.getSize().y * 0.48 + 30 : 30],
       })
     }
     fit()
     map.on('resize', fit)
     return () => { map.off('resize', fit) }
-  }, [map, key])
+  }, [map, key, mobileView])
+  return null
+}
+
+/** Leaflet only listens to window resizes; switching the mobile/desktop layout resizes the container instead. */
+function TrackContainerSize() {
+  const map = useMap()
+  useEffect(() => {
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(() => map.invalidateSize())
+    observer.observe(map.getContainer())
+    return () => observer.disconnect()
+  }, [map])
   return null
 }
 
@@ -260,7 +272,7 @@ function LiveTrackingLegend({ count, loading, errors }: { count: number; loading
 }
 
 export function RouteMap({ origin, destination, itinerary, userPosition, vehicles, at, crowdTolerance, onSelectStop, trackingLoading, trackingErrors, ready = true, alternativeStops = [], hoveredAlternativeStop = null, focusPoints = null }: Props) {
-  const { t, language, timeSlider, city } = useSettings()
+  const { t, language, timeSlider, city, mobileView } = useSettings()
   const [clock, setClock] = useState(Date.now)
   const [offset, setOffset] = useState({ key: '', minutes: 0 })
   const basis = itinerary ? `${itinerary.id}:${at}` : 'now'
@@ -286,7 +298,8 @@ export function RouteMap({ origin, destination, itinerary, userPosition, vehicle
         attribution={`&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> ${t('contributors')}`}
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
       />
-      <FitBounds points={focusPoints && focusPoints.length > 1 ? focusPoints : boundsPoints} />
+      <TrackContainerSize />
+      <FitBounds points={focusPoints && focusPoints.length > 1 ? focusPoints : boundsPoints} mobileView={mobileView} />
       {ready && <CrowdOverlay at={forecastAt} itinerary={itinerary} />}
       {ready && itinerary?.legs.some(leg => leg.mode === 'transit') && <VehiclePredictions at={forecastAt} itinerary={itinerary} />}
       {timeSlider && <TimeSlider at={forecastAt} value={minutes} onChange={value => setOffset({ key: basis, minutes: value })} />}

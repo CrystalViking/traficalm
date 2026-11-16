@@ -281,24 +281,141 @@ def test_strict_walking_keeps_walks_out_of_crowded_areas(index, estimator):
         assert not any(planner._hits_zone(leg.geometry) for leg in it.legs if leg.mode == "walk")
 
 
-def test_strict_walk_detours_around_a_crowded_area(index, estimator):
+def _crowded(monkeypatch, index, *areas):
+    """Forecast high crowd discs (lat, lon, radius_m, minutes after MONDAY_RUSH or None for always)."""
     from shapely.geometry import Point
+
+    from app import planner
+    from app.crowd.areas import AreaSample, _xy
+
+    def collect_samples(estimator, when, bounds, spacings=None, min_crowd=0):
+        return [
+            AreaSample("Test crowd", "area", Point(_xy(lat, lon, index.city)).buffer(radius), 80, [])
+            for lat, lon, radius, minutes in areas
+            if minutes is None or when == MONDAY_RUSH + timedelta(minutes=minutes)
+        ]
+
+    monkeypatch.setattr(planner, "collect_samples", collect_samples)
+
+
+def _crosses(index, geometry, lat, lon, radius):
+    from shapely.geometry import LineString, Point
 
     from app.crowd.areas import _xy
 
+    line = LineString([_xy(*point, index.city) for point in geometry])
+    return line.intersects(Point(_xy(lat, lon, index.city)).buffer(radius))
+
+
+def _inside_m(index, geometry, lat, lon, radius):
+    from shapely.geometry import LineString, Point
+
+    from app.crowd.areas import _xy
+
+    line = LineString([_xy(*point, index.city) for point in geometry])
+    return line.intersection(Point(_xy(lat, lon, index.city)).buffer(radius)).length
+
+
+def test_strict_walk_detours_around_a_crowded_area(index, estimator, monkeypatch):
+    mid = ((ORIGIN.lat + NEAR_S5.lat) / 2, (ORIGIN.lon + NEAR_S5.lon) / 2)
+    _crowded(monkeypatch, index, (*mid, 300, None))
     planner = Planner(index, estimator, use_walk_router=False, strict_walking=True)
     planner._prepare(ORIGIN, NEAR_S5, MONDAY_RUSH, None, frozenset())
-    mid = ((ORIGIN.lat + NEAR_S5.lat) / 2, (ORIGIN.lon + NEAR_S5.lon) / 2)
-    from shapely.prepared import prep
-
-    planner._zone = Point(_xy(*mid, index.city)).buffer(300)
-    planner._zone_prep = prep(planner._zone)
     straight = Planner(index, estimator, use_walk_router=False)._walk(ORIGIN.lat, ORIGIN.lon, NEAR_S5.lat, NEAR_S5.lon)
-    path = planner._walk(ORIGIN.lat, ORIGIN.lon, NEAR_S5.lat, NEAR_S5.lon)
-    assert planner._hits_zone(list(straight.geometry))
+    path = planner._walk(ORIGIN.lat, ORIGIN.lon, NEAR_S5.lat, NEAR_S5.lon, start=MONDAY_RUSH)
+    assert _crosses(index, straight.geometry, *mid, 300)
     assert path is not None and len(path.geometry) > 2
-    assert not planner._hits_zone(list(path.geometry))
+    assert not _crosses(index, path.geometry, *mid, 300)
     assert path.distance_m > straight.distance_m
+
+
+def test_strict_walk_avoids_areas_forecast_within_an_hour_of_departure(index, estimator, monkeypatch):
+    # The crowd map shows the forecast for an hour after departure, so a short walk avoids that too.
+    end = Place(ORIGIN.lat + 0.006, ORIGIN.lon, "Kiosk")
+    mid = (ORIGIN.lat + 0.003, ORIGIN.lon)
+    for minutes, detours in ((60, True), (70, False)):
+        _crowded(monkeypatch, index, (*mid, 100, minutes))
+        planner = Planner(index, estimator, use_walk_router=False, strict_walking=True)
+        planner._prepare(ORIGIN, end, MONDAY_RUSH, None, frozenset())
+        path = planner._walk(ORIGIN.lat, ORIGIN.lon, end.lat, end.lon, start=MONDAY_RUSH)
+        assert path is not None and (len(path.geometry) > 2) == detours
+        assert not detours or not _crosses(index, path.geometry, *mid, 100)
+
+
+def test_strict_walk_enters_a_crowded_area_only_around_an_endpoint_inside_it(index, estimator, monkeypatch):
+    start = Place(NEAR_S5.lat - 0.008, NEAR_S5.lon, "Park")
+    # The destination lies 100 m inside an area: the walk may enter it to get there.
+    _crowded(monkeypatch, index, (NEAR_S5.lat + 0.0027, NEAR_S5.lon, 400, None))
+    planner = Planner(index, estimator, use_walk_router=False, strict_walking=True)
+    planner._prepare(start, NEAR_S5, MONDAY_RUSH, None, frozenset())
+    path = planner._walk(start.lat, start.lon, NEAR_S5.lat, NEAR_S5.lon, start=MONDAY_RUSH)
+    assert path is not None and len(path.geometry) == 2
+    assert planner._hits_zone([(NEAR_S5.lat, NEAR_S5.lon), (NEAR_S5.lat + 0.005, NEAR_S5.lon)])
+    # An area just short of the destination is not exempt.
+    _crowded(monkeypatch, index, (NEAR_S5.lat - 0.0012, NEAR_S5.lon, 60, None))
+    planner = Planner(index, estimator, use_walk_router=False, strict_walking=True)
+    planner._prepare(start, NEAR_S5, MONDAY_RUSH, None, frozenset())
+    path = planner._walk(start.lat, start.lon, NEAR_S5.lat, NEAR_S5.lon, start=MONDAY_RUSH)
+    assert path is not None and len(path.geometry) > 2
+    assert not _crosses(index, path.geometry, NEAR_S5.lat - 0.0012, NEAR_S5.lon, 60)
+
+
+def test_strict_walk_crosses_an_endpoint_area_only_on_its_own_way_out(index, estimator, monkeypatch):
+    # The start lies 20 m inside an area: its walk may go ENDPOINT_SLACK_M further, other walks not at all.
+    _crowded(monkeypatch, index, (ORIGIN.lat + 0.002518, ORIGIN.lon, 300, None))
+    planner = Planner(index, estimator, use_walk_router=False, strict_walking=True)
+    planner._prepare(ORIGIN, NEAR_S5, MONDAY_RUSH, None, frozenset())
+    start = (ORIGIN.lat, ORIGIN.lon)
+    assert not planner._hits_zone([start, (ORIGIN.lat - 0.003, ORIGIN.lon)])
+    assert not planner._hits_zone([start, (ORIGIN.lat + 0.00045, ORIGIN.lon)])
+    assert planner._hits_zone([start, (ORIGIN.lat + 0.00135, ORIGIN.lon)])
+    assert planner._hits_zone([(ORIGIN.lat + 0.0003, ORIGIN.lon - 0.0004), (ORIGIN.lat + 0.0003, ORIGIN.lon + 0.0004)])
+
+
+def test_strict_plan_ranks_routes_by_their_walk_through_crowded_areas(index, estimator, monkeypatch):
+    # The destination lies in an area: alighting at the busy main station means a shorter walk through it.
+    s3, s4, main, h1 = (index.stops[sid] for sid in ("S3", "S4", "MAIN", "H1"))
+    end = Place((s4.lat + main.lat + h1.lat) / 3, (s4.lon + main.lon + h1.lon) / 3, "Market")
+    _crowded(monkeypatch, index, (end.lat, end.lon, 500, None))
+    results = Planner(index, estimator, use_walk_router=False, strict_walking=True).plan_strict(ORIGIN, end, MONDAY_RUSH)
+    assert {it.legs[-1].start.name for it in results} == {s3.name, main.name}
+    crowd_walk = [
+        sum(_inside_m(index, leg.geometry, end.lat, end.lon, 500) for leg in it.legs if leg.mode == "walk")
+        for it in results
+    ]
+    assert [m // 50 for m in crowd_walk] == sorted(m // 50 for m in crowd_walk)
+    assert results[0].legs[-1].start.name == main.name
+    assert results[0].crowd_index > min(it.crowd_index for it in results)
+
+
+def test_strict_plan_never_walks_through_crowded_areas(index, estimator, monkeypatch):
+    flexible = _plan(index, estimator, NEAR_S5)
+    walk = max((leg for it in flexible for leg in it.legs if leg.mode == "walk"), key=lambda leg: leg.distance_m)
+    area = ((walk.start.lat + walk.end.lat) / 2, (walk.start.lon + walk.end.lon) / 2, 80)
+    assert _crosses(index, walk.geometry, *area)
+    _crowded(monkeypatch, index, (*area, None))
+    results = Planner(index, estimator, use_walk_router=False, strict_walking=True).plan_strict(
+        ORIGIN, NEAR_S5, MONDAY_RUSH,
+    )
+    assert results
+    assert not any(_crosses(index, leg.geometry, *area) for it in results for leg in it.legs if leg.mode == "walk")
+
+
+def test_strict_continuation_walks_around_crowded_areas(index, estimator, monkeypatch):
+    from app.planner import Ride
+
+    s3, s4 = index.stops["S3"], index.stops["S4"]
+    area = ((s3.lat + s4.lat) / 2, (s3.lon + s4.lon) / 2, 60)
+    _crowded(monkeypatch, index, (*area, None))
+    planner = Planner(index, estimator, use_walk_router=False, strict_walking=True)
+    results = planner.continue_journey(
+        ORIGIN, NEAR_T2, MONDAY_RUSH, (Ride("8_15", 0, 2, 0),), "S3", "S4", 35, frozenset({"MAIN"}),
+    )
+    assert results
+    for itinerary in results:
+        bridge = next(leg for leg in itinerary.legs if leg.mode == "walk" and leg.start.name == s3.name)
+        assert len(bridge.geometry) > 2
+        assert not any(_crosses(index, leg.geometry, *area) for leg in itinerary.legs if leg.mode == "walk")
 
 
 def test_strict_plan_replans_and_keeps_public_transport(index, estimator):

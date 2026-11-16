@@ -1,7 +1,21 @@
-export function formatTime(iso: string | null | undefined): string {
+import type { Language } from '../translations'
+import type { TimeFormat } from '../settings'
+
+export function formatTime(iso: string | null | undefined, timeFormat: TimeFormat = '24h', language: Language = 'en'): string {
   if (!iso) return ''
   const date = new Date(iso)
-  return date.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Warsaw' })
+  return date.toLocaleTimeString(language === 'pl' ? 'pl-PL' : 'en-GB', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: timeFormat === '24h' ? 'h23' : 'h12',
+    timeZone: 'Europe/Warsaw',
+  })
+}
+
+export function formatEuropeanDateTime(localDateTime: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(localDateTime)
+  if (!match) return ''
+  return `${match[3]}/${match[2]}/${match[1]} ${match[4]}:${match[5]}`
 }
 
 export function formatDuration(seconds: number): string {
@@ -45,7 +59,7 @@ export function crowdLabel(index: number): string {
   return { low: 'Low crowd', moderate: 'Moderate crowd', high: 'High crowd', 'very-high': 'Very high crowd' }[crowdLevel(index)]
 }
 
-/** Value for <input type="datetime-local"> in the user's local time. */
+/** Local wall time in YYYY-MM-DDTHH:mm form. */
 export function toLocalInputValue(date: Date): string {
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`

@@ -145,6 +145,36 @@ def test_disconnected_regions_stay_separate_and_corridor_clips_only_lower_bands(
     assert {a.name for a in clipped} == {"Near", "Always high"}
 
 
+def test_crowd_grid_cells_snap_to_a_city_lattice(estimator):
+    from app.crowd.areas import collect_samples
+
+    def cells(bounds):
+        samples = collect_samples(estimator, MONDAY_RUSH, bounds, (250.0,))
+        return {s.footprint.bounds for s in samples if s.name == "Estimated area crowd"}
+
+    # The map and strict walking request different bounds, but must see the same cells.
+    shifted = cells((54.3412, 18.6037, 54.3801, 18.6655))
+    assert shifted and shifted <= cells((54.33, 18.58, 54.39, 18.68))
+
+
+def test_high_crowd_sampling_only_skips_cells_that_cannot_be_high(index):
+    from app.crowd.areas import collect_samples
+    from app.crowd.estimator import CrowdEstimator
+
+    match = EventInfo("Lechia match", 54.3897, 18.6403, MONDAY_RUSH, MONDAY_RUSH + timedelta(hours=2), 35_000, 600)
+    estimator = CrowdEstimator(index, events=[match], laya=FakeLaya(None))
+    bounds = (54.32, 18.55, 54.42, 18.72)
+    found = 0
+    for when in (MONDAY_RUSH, MONDAY_RUSH.replace(hour=13), MONDAY_NIGHT):
+        fast = collect_samples(estimator, when, bounds, (250.0, 500.0), 50)
+        full = [s for s in collect_samples(estimator, when, bounds, (250.0, 500.0)) if s.crowd_index >= 50]
+        assert sorted((s.footprint.bounds, s.crowd_index) for s in fast) == sorted(
+            (s.footprint.bounds, s.crowd_index) for s in full
+        )
+        found += sum(s.name == "Estimated area crowd" for s in fast)
+    assert found
+
+
 def test_laya_opt_out_does_not_call_model_or_affect_other_estimators(index):
     from app.crowd.estimator import CrowdEstimator
 

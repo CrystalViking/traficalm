@@ -1,12 +1,18 @@
 import { describe, expect, it } from 'vitest'
-import { crowdLabel, crowdLevel, formatDelay, formatDistance, formatDuration, formatTime } from './format'
+import { crowdLabel, crowdLevel, formatDelay, formatDistance, formatDuration, formatEuropeanDateTime, formatTime } from './format'
 import { sortByCrowd } from './sort'
 import { makeItinerary } from '../test/fixtures'
 
 describe('format helpers', () => {
   it('formats times in Warsaw time', () => {
     expect(formatTime('2026-11-16T06:20:00Z')).toBe('07:20')
+    expect(formatTime('2026-11-15T23:05:00Z')).toBe('00:05')
+    expect(formatTime('2026-11-16T12:20:00Z', '12h')).toMatch(/0?1:20\s*pm/i)
     expect(formatTime(null)).toBe('')
+  })
+
+  it('formats European departure date and time', () => {
+    expect(formatEuropeanDateTime('2026-11-16T07:20')).toBe('16/11/2026 07:20')
   })
 
   it('formats durations, distances and delays', () => {

@@ -8,3 +8,4 @@ protobuf==7.36.2
 pydantic-settings==2.16.3
 tzdata==2026.6
 shapely==2.2.0
+numpy==2.5.4

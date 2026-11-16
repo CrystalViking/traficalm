@@ -21,7 +21,7 @@ interface Props {
 }
 
 export function ItineraryDetails({ itinerary, realtime, crowdTolerance = DEFAULT_CROWD_TOLERANCE, onAvoidStop, editing = false, selectedStop = null, onSelectStop, editingStop, stopEditor }: Props) {
-  const { t, external } = useSettings()
+  const { t, external, timeFormat, language } = useSettings()
   const [confirmedStop, setConfirmedStop] = useState<StopCall | null>(null)
   const [dismissedStops, setDismissedStops] = useState<Set<StopCall>>(() => new Set())
   const selectedRow = useRef<HTMLTableRowElement>(null)
@@ -33,7 +33,7 @@ export function ItineraryDetails({ itinerary, realtime, crowdTolerance = DEFAULT
     <section className="itinerary-details" aria-label={t('Selected route details')}>
       <header>
         <h2>
-          {formatTime(itinerary.departure)} – {formatTime(itinerary.arrival)} · {formatDuration(itinerary.duration_seconds)}
+          {formatTime(itinerary.departure, timeFormat, language)} – {formatTime(itinerary.arrival, timeFormat, language)} · {formatDuration(itinerary.duration_seconds)}
         </h2>
         <CrowdBadge value={itinerary.crowd_index} />
       </header>
@@ -112,7 +112,7 @@ export function ItineraryDetails({ itinerary, realtime, crowdTolerance = DEFAULT
                             {stop.name}
                           </button>
                         ) : stop.name}</td>
-                        <td className="slide-host">{formatTime(planned)}
+                        <td className="slide-host">{formatTime(planned, timeFormat, language)}
                           {onAvoidStop && (
                             <SlideAction open={expanded && !(editingStop === stop && stopEditor)}>
                               <button type="button" className="avoid-stop" disabled={editing} onClick={() => onAvoidStop(stop)}
@@ -124,7 +124,7 @@ export function ItineraryDetails({ itinerary, realtime, crowdTolerance = DEFAULT
                           )}
                         </td>
                         <td className={delay && delay > 60 ? 'late' : undefined}>
-                          {actual ? `${formatTime(actual)} (${external(formatDelay(delay))})` : '–'}
+                          {actual ? `${formatTime(actual, timeFormat, language)} (${external(formatDelay(delay))})` : '–'}
                         </td>
                         <td>
                           <CrowdBadge value={stop.crowd_index} compact />

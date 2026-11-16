@@ -23,7 +23,7 @@ function summary(it: Itinerary): string {
 }
 
 export function RouteOptions({ itineraries, selectedId, onSelect, onHover, limit, showWalkTransfers = false }: Props) {
-  const { t } = useSettings()
+  const { t, timeFormat, language } = useSettings()
   const [expanded, setExpanded] = useState(false)
   if (itineraries.length === 0) {
     return <p className="hint">{t('No connections found for this time. Try another departure time.')}</p>
@@ -51,7 +51,7 @@ export function RouteOptions({ itineraries, selectedId, onSelect, onHover, limit
             </div>
             <div className="option-meta">
               <span>
-                {formatTime(it.departure)} – {formatTime(it.arrival)}
+                {formatTime(it.departure, timeFormat, language)} – {formatTime(it.arrival, timeFormat, language)}
               </span>
               <span>{formatDuration(it.duration_seconds)}</span>
               <span>{it.type === 'walk' ? t('walking only') : it.transfers === 0 ? t('direct') : t(it.transfers === 1 ? '{count} change' : '{count} changes', { count: it.transfers })}</span>
