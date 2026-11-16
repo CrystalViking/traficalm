@@ -11,10 +11,11 @@ export interface AppSettings {
   darkMode: boolean
   walkRadiusM: number
   timeSlider: boolean
+  strictWalking: boolean
 }
 
 export const DEFAULT_CROWD_TOLERANCE = 60
-export const DEFAULT_SETTINGS: AppSettings = { city: 'gdansk', gps: false, language: 'en', darkMode: false, walkRadiusM: 500, timeSlider: false }
+export const DEFAULT_SETTINGS: AppSettings = { city: 'gdansk', gps: false, language: 'en', darkMode: false, walkRadiusM: 500, timeSlider: false, strictWalking: false }
 export const SETTINGS_KEY = 'traficalm-settings'
 export const SettingsContext = createContext<AppSettings>(DEFAULT_SETTINGS)
 
@@ -33,6 +34,7 @@ export function readSettings(): { value: AppSettings; error: string | null } {
         gps: 'gps' in value ? value.gps === true : false,
         language: value.language, darkMode: value.darkMode, walkRadiusM: value.walkRadiusM,
         timeSlider: 'timeSlider' in value ? value.timeSlider === true : false,
+        strictWalking: 'strictWalking' in value ? value.strictWalking === true : false,
       }, error: null }
     }
     return { value: DEFAULT_SETTINGS, error: 'Saved app settings are invalid; using defaults.' }

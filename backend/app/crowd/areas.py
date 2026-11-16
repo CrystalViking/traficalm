@@ -78,10 +78,10 @@ def merge_areas(samples: list[AreaSample], corridor: BaseGeometry | None = None,
     return areas
 
 
-def predict_areas(
+def collect_samples(
     estimator: CrowdEstimator, when: datetime, bounds: tuple[float, float, float, float],
-    route_geometry: list[tuple[float, float]] | None = None,
-) -> list[CrowdAreaOut]:
+) -> list[AreaSample]:
+    """Crowd footprints (hotspots, events, busy stops and a grid) behind the crowd map."""
     samples: list[AreaSample] = []
     city = estimator.index.city
 
@@ -114,6 +114,15 @@ def predict_areas(
                 footprint = box(xs[col], ys[row], xs[col + 1], ys[row + 1])
                 lat, lon = _latlon(footprint.centroid.x, footprint.centroid.y, city)
                 add("Estimated area crowd", "area", lat, lon, footprint)
+    return samples
+
+
+def predict_areas(
+    estimator: CrowdEstimator, when: datetime, bounds: tuple[float, float, float, float],
+    route_geometry: list[tuple[float, float]] | None = None,
+) -> list[CrowdAreaOut]:
+    samples = collect_samples(estimator, when, bounds)
+    city = estimator.index.city
     corridor: BaseGeometry | None = None
     if route_geometry is not None:
         points = [_xy(lat, lon, city) for lat, lon in route_geometry]

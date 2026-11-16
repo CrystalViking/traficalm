@@ -122,6 +122,7 @@ class ContinueJourneyRequest(BaseModel):
     avoid_stop_ids: list[str] = Field(default_factory=list, max_length=20)
     crowd_tolerance: int = Field(default=DEFAULT_CROWD_TOLERANCE, ge=0, le=100)
     use_laya: bool = False
+    strict_walking: bool = False
     walk_radius_m: int = Field(default=500, ge=100, le=20000)
 
 

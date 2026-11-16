@@ -35,6 +35,10 @@ const response = (id: string, avoided: string[] = []): PlanResponse => {
   }
 }
 
+const exitChoice = async (key: string) => {
+  await userEvent.click(document.querySelector(`[data-exit-key="${key}"]`) as HTMLElement)
+}
+
 async function plan() {
   const close = screen.queryByRole('button', { name: 'Close settings' })
   if (close) await userEvent.click(close)
@@ -146,7 +150,8 @@ describe('crowd tolerance and route editing', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Close settings' }))
     await plan()
     await userEvent.click(screen.getByRole('button', { name: 'Yes, avoid Stop 3' }))
-    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Where to get off' }), '1:3')
+    await userEvent.click(screen.getByRole('button', { name: 'Get off and continue' }))
+    await exitChoice('1:3')
     await userEvent.click(await screen.findByRole('button', { name: /New stop ·/ }))
     expect(vi.mocked(nearbyStops).mock.calls[0][3]).toBe(3500)
     expect(vi.mocked(continueJourney).mock.calls[0][8]).toBe(3500)
@@ -231,7 +236,7 @@ describe('crowd tolerance and route editing', () => {
     const details = screen.getByRole('region', { name: 'Selected route details' })
     expect(within(details).getByText('🚋 8')).toBeInTheDocument()
     await userEvent.click(within(panel).getByRole('button', { name: /30%/ }))
-    expect(screen.getByText('Map route: original')).toBeInTheDocument()
+    expect(screen.getByText('Map route: alternative')).toBeInTheDocument()
     await userEvent.click(within(panel).getByRole('button', { name: 'Confirm new route' }))
     await waitFor(() => expect(within(screen.getByRole('region', { name: 'Selected route details' })).getByText('🚌 9')).toBeInTheDocument())
     expect(screen.queryByRole('region', { name: 'Change route at Stop 3' })).not.toBeInTheDocument()
@@ -275,7 +280,8 @@ describe('crowd tolerance and route editing', () => {
     render(<App />)
     await plan()
     await userEvent.click(screen.getByRole('button', { name: 'Yes, avoid Stop 3' }))
-    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Where to get off' }), `1:${sequence}`)
+    await userEvent.click(screen.getByRole('button', { name: 'Get off and continue' }))
+    await exitChoice(`1:${sequence}`)
     const stopButton = await screen.findByRole('button', { name: /New stop ·/ })
     expect(screen.getByText('Alternative map stops: New stop')).toBeInTheDocument()
     fireEvent.mouseEnter(stopButton)
@@ -291,7 +297,7 @@ describe('crowd tolerance and route editing', () => {
     expect(screen.getByText('Map route: original')).toBeInTheDocument()
     expect(within(routes).getByRole('button', { name: 'Confirm new route' })).toBeDisabled()
     await userEvent.click(within(routes).getByRole('button', { name: /30%/ }))
-    expect(screen.getByText('Map route: original')).toBeInTheDocument()
+    expect(screen.getByText('Map route: continued')).toBeInTheDocument()
     await userEvent.click(within(routes).getByRole('button', { name: 'Confirm new route' }))
     expect(screen.getByText('Map route: continued')).toBeInTheDocument()
     expect(screen.getByText('Alternative map stops:')).toBeInTheDocument()
@@ -307,10 +313,11 @@ describe('crowd tolerance and route editing', () => {
     render(<App />)
     await plan()
     await userEvent.click(screen.getByRole('button', { name: 'Yes, avoid Stop 3' }))
-    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Where to get off' }), '1:3')
+    await userEvent.click(screen.getByRole('button', { name: 'Get off and continue' }))
+    await exitChoice('1:3')
     await userEvent.click(await screen.findByRole('button', { name: /New stop ·/ }))
     await screen.findByText(/Finding onward routes/)
-    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Where to get off' }), '1:1')
+    await exitChoice('1:1')
     expect(vi.mocked(continueJourney).mock.calls[0][7]?.aborted).toBe(true)
     await act(async () => complete?.(response('stale')))
     expect(screen.queryByRole('button', { name: 'Confirm new route' })).not.toBeInTheDocument()
@@ -335,11 +342,13 @@ describe('crowd tolerance and route editing', () => {
     render(<App />)
     await plan()
     await userEvent.click(screen.getByRole('button', { name: 'Yes, avoid Transfer boarding' }))
-    const choices = screen.getByRole('combobox', { name: 'Where to get off' })
-    expect(within(choices).getByRole('option', { name: 'Stop 1 (before Stop 3)' })).toHaveValue('1:1')
-    expect(within(choices).getByRole('option', { name: 'Stop 3 (before Transfer boarding)' })).toHaveValue('1:3')
-    expect(within(choices).getByRole('option', { name: 'Transfer boarding (selected stop)' })).toHaveValue('3:1')
-    await userEvent.selectOptions(choices, '1:3')
+    await userEvent.click(screen.getByRole('button', { name: 'Get off and continue' }))
+    const choices = screen.getByRole('radiogroup', { name: 'Where to get off' })
+    expect(within(choices).getByRole('radio', { name: 'Stop 1 (before Stop 3)' })).toHaveAttribute('data-exit-key', '1:1')
+    expect(within(choices).getByRole('radio', { name: 'Stop 3 (before Transfer boarding)' })).toHaveAttribute('data-exit-key', '1:3')
+    expect(within(choices).getByRole('radio', { name: 'Transfer boarding (selected stop)' })).toHaveAttribute('data-exit-key', '3:1')
+    expect(within(choices).getByRole('radio', { name: 'Stop 3 (before Transfer boarding)' })).toBeChecked()
+    await exitChoice('1:3')
     await userEvent.click(await screen.findByRole('button', { name: /New stop ·/ }))
     expect(vi.mocked(continueJourney).mock.calls[0][2]).toBe(firstRide.stops[1])
     await userEvent.click(screen.getByRole('button', { name: 'Keep current route' }))
@@ -361,20 +370,18 @@ describe('crowd tolerance and route editing', () => {
     render(<App />)
     await plan()
     await userEvent.click(screen.getByRole('button', { name: `Yes, avoid Route stop ${selectedSequence}` }))
-    const choices = screen.getByRole('combobox', { name: 'Where to get off' })
+    await userEvent.click(screen.getByRole('button', { name: 'Get off and continue' }))
+    const choices = screen.getByRole('radiogroup', { name: 'Where to get off' })
     const preceding = Array.from({ length: Math.min(3, selectedSequence - 1) }, (_, index) =>
       selectedSequence - Math.min(3, selectedSequence - 1) + index)
-    expect(within(choices).getAllByRole('option').map(option => option.textContent)).toEqual([
-      'Choose an exit stop',
+    expect(within(choices).getAllByRole('radio').map(option => option.getAttribute('aria-label'))).toEqual([
       ...preceding.map(sequence => `Route stop ${sequence} (before Route stop ${sequence + 1})`),
       `Route stop ${selectedSequence} (selected stop)`,
     ])
-    expect(nearbyStops).not.toHaveBeenCalled()
     const exitSequence = preceding[0] ?? selectedSequence
-    await userEvent.selectOptions(choices, `1:${exitSequence}`)
+    await exitChoice(`1:${exitSequence}`)
     await screen.findByRole('button', { name: /Geographically closest stop ·/ })
-    expect(vi.mocked(nearbyStops).mock.calls[0][0]).toBe(ride.stops[exitSequence - 1])
-    expect(within(choices).queryByRole('option', { name: /Geographically closest/ })).not.toBeInTheDocument()
+    expect(vi.mocked(nearbyStops).mock.calls.at(-1)?.[0]).toBe(ride.stops[exitSequence - 1])
   })
 
   it('uses the 500 m default and removes stops with no onward route, but not stops with a service error', async () => {
@@ -388,7 +395,8 @@ describe('crowd tolerance and route editing', () => {
     render(<App />)
     await plan()
     await userEvent.click(screen.getByRole('button', { name: 'Yes, avoid Stop 3' }))
-    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Where to get off' }), '1:3')
+    await userEvent.click(screen.getByRole('button', { name: 'Get off and continue' }))
+    await exitChoice('1:3')
     await userEvent.click(await screen.findByRole('button', { name: /Unavailable stop ·/ }))
     await screen.findByText('No onward route from Unavailable stop. This stop was removed; choose another stop.')
     expect(screen.queryByRole('button', { name: /Unavailable stop ·/ })).not.toBeInTheDocument()

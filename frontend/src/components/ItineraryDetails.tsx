@@ -3,6 +3,8 @@ import type { ReactNode } from 'react'
 import type { Itinerary, StopCall, TripRealtime } from '../types'
 import { formatDelay, formatDistance, formatDuration, formatTime } from '../utils/format'
 import { CrowdBadge } from './CrowdBadge'
+import { HelpTip } from './HelpTip'
+import { SlideAction } from './SlideAction'
 import { DEFAULT_CROWD_TOLERANCE, useSettings } from '../settings'
 import { realtimeKey } from '../utils/realtime'
 
@@ -110,7 +112,17 @@ export function ItineraryDetails({ itinerary, realtime, crowdTolerance = DEFAULT
                             {stop.name}
                           </button>
                         ) : stop.name}</td>
-                        <td>{formatTime(planned)}</td>
+                        <td className="slide-host">{formatTime(planned)}
+                          {onAvoidStop && (
+                            <SlideAction open={expanded && !(editingStop === stop && stopEditor)}>
+                              <button type="button" className="avoid-stop" disabled={editing} onClick={() => onAvoidStop(stop)}
+                                aria-label={t('Find alternatives avoiding {stop}', { stop: stop.name })}>
+                                {t('Avoid stop')}
+                              </button>
+                              <HelpTip text={t('Find another line or walk to a nearby stop to continue your journey.')} />
+                            </SlideAction>
+                          )}
+                        </td>
                         <td className={delay && delay > 60 ? 'late' : undefined}>
                           {actual ? `${formatTime(actual)} (${external(formatDelay(delay))})` : '–'}
                         </td>
@@ -118,19 +130,11 @@ export function ItineraryDetails({ itinerary, realtime, crowdTolerance = DEFAULT
                           <CrowdBadge value={stop.crowd_index} compact />
                         </td>
                       </tr>
-                      {onAvoidStop && (expanded || (aboveTolerance && (!dismissedStops.has(stop) || selectedStop === stop))) && (
+                      {onAvoidStop && (editingStop === stop && stopEditor ? true : !expanded && aboveTolerance && (!dismissedStops.has(stop) || selectedStop === stop)) && (
                         <tr className="stop-action-row">
                           <td colSpan={4}>
                             <div className="stop-action" key={expanded ? 'action' : 'prompt'}>
-                              {editingStop === stop && stopEditor ? stopEditor : expanded ? (
-                                <>
-                                  <p>{t('Find another line or walk to a nearby stop to continue your journey.')}</p>
-                                  <button type="button" className="avoid-stop" disabled={editing} onClick={() => onAvoidStop(stop)}
-                                    aria-label={t('Find alternatives avoiding {stop}', { stop: stop.name })}>
-                                    {t('Avoid stop')}
-                                  </button>
-                                </>
-                              ) : (
+                              {editingStop === stop && stopEditor ? stopEditor : (
                                 <>
                                   <p>{t('{stop} is above your {tolerance}% tolerance ({crowd}%). Would you like to avoid this stop?', { stop: stop.name, tolerance: crowdTolerance, crowd: stop.crowd_index })}</p>
                                   <button type="button" disabled={editing} onClick={() => {

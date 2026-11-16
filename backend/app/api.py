@@ -244,6 +244,7 @@ def plan(
     crowd_tolerance: int = Query(DEFAULT_CROWD_TOLERANCE, ge=0, le=100),
     avoid_stop_ids: Annotated[list[str] | None, Query(max_length=20)] = None,
     use_laya: bool = False,
+    strict_walking: bool = False,
 ) -> PlanResponse:
     s = get_settings()
     tz = ZoneInfo(s.timezone)
@@ -256,9 +257,12 @@ def plan(
         raise HTTPException(422, "One or more avoided stops are unknown")
     events = load_events(session, when, when + timedelta(hours=4))
     estimator = CrowdEstimator(index, events, use_laya=use_laya)
-    planner = Planner(index, estimator, realtime.trip_updates(), use_walk_router=s.walking_router_enabled)
+    planner = Planner(
+        index, estimator, realtime.trip_updates(),
+        use_walk_router=s.walking_router_enabled, strict_walking=strict_walking,
+    )
     origin, destination = Place(from_lat, from_lon, from_name), Place(to_lat, to_lon, to_name)
-    itineraries = planner.plan(
+    itineraries = (planner.plan_strict if strict_walking else planner.plan)(
         origin, destination, when, max_results=max_results,
         crowd_tolerance=crowd_tolerance, avoid_stop_ids=avoided,
     )
@@ -364,7 +368,10 @@ def continue_journey(request: ContinueJourneyRequest, session: SessionDep, index
         if board < alight:
             rides.append(Ride(trip.trip_id, board, alight, (selection.service_date - when.date()).days * 86400))
     estimator = CrowdEstimator(index, load_events(session, when, when + timedelta(hours=8)), use_laya=request.use_laya)
-    planner = Planner(index, estimator, realtime.trip_updates(), use_walk_router=s.walking_router_enabled)
+    planner = Planner(
+        index, estimator, realtime.trip_updates(),
+        use_walk_router=s.walking_router_enabled, strict_walking=request.strict_walking,
+    )
     origin = Place(request.origin.lat, request.origin.lon, request.origin.name)
     destination = Place(request.destination.lat, request.destination.lon, request.destination.name)
     avoided = frozenset(request.avoid_stop_ids)

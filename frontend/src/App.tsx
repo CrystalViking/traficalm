@@ -10,7 +10,7 @@ import { SettingsMenu } from './components/SettingsMenu'
 import type { AppSettings } from './settings'
 import { DEFAULT_CROWD_TOLERANCE, readSettings, SETTINGS_KEY, SettingsContext, useSettings } from './settings'
 import { useGeolocation } from './hooks/useGeolocation'
-import type { CityStatus, NearbyStop, Place, PlanResponse, StopCall, TripRealtime, Vehicle } from './types'
+import type { CityStatus, Itinerary, NearbyStop, Place, PlanResponse, StopCall, TripRealtime, Vehicle } from './types'
 import type { City } from './cities'
 import { CITIES } from './cities'
 import { toLocalInputValue } from './utils/format'
@@ -99,6 +99,8 @@ function JourneyPlanner({ settings, onSettingsChange, appSettingsError, cityData
   const [leaveAt, setLeaveAt] = useState(() => toLocalInputValue(new Date()))
   const [plan, setPlan] = useState<PlanResponse | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [hoveredId, setHoveredId] = useState<string | null>(null)
+  const detailsRef = useRef<HTMLDivElement>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [liveSnapshot, setLiveSnapshot] = useState<{ key: string; data: Record<string, TripRealtime>; errors: string[] }>({ key: '', data: {}, errors: [] })
@@ -108,6 +110,9 @@ function JourneyPlanner({ settings, onSettingsChange, appSettingsError, cityData
   const [avoidingStop, setAvoidingStop] = useState<StopCall | null>(null)
   const [alternativeStops, setAlternativeStops] = useState<NearbyStop[]>([])
   const [hoveredAlternativeStop, setHoveredAlternativeStop] = useState<string | null>(null)
+  const [alternativePreview, setAlternativePreview] = useState<Itinerary | null>(null)
+  const [focusPoints, setFocusPoints] = useState<[number, number][] | null>(null)
+  const [slowPlanning, setSlowPlanning] = useState(false)
   const [selectedStop, setSelectedStop] = useState<StopCall | null>(null)
   const [layaPreference, setLayaPreference] = useState(readLayaPreference)
   const planRequest = useRef<AbortController | null>(null)
@@ -117,8 +122,18 @@ function JourneyPlanner({ settings, onSettingsChange, appSettingsError, cityData
 
   const options = useMemo(() => sortByCrowd(plan?.itineraries ?? []), [plan])
   const selected = options.find((it) => it.id === selectedId) ?? null
+  const previewed = options.find((it) => it.id === hoveredId) ?? selected
   const liveKey = selected ? JSON.stringify([settings.city, selected.id, selected.legs.map(leg => [leg.trip_id, leg.service_date])]) : ''
   const realtime = liveSnapshot.key === liveKey ? liveSnapshot.data : {}
+
+  useEffect(() => {
+    if (!loading) return
+    const timer = setTimeout(() => setSlowPlanning(true), 1000)
+    return () => {
+      clearTimeout(timer)
+      setSlowPlanning(false)
+    }
+  }, [loading])
 
   useEffect(() => {
     return () => {
@@ -167,7 +182,7 @@ function JourneyPlanner({ settings, onSettingsChange, appSettingsError, cityData
     setError(null)
     try {
       const departure = leaveAt ? new Date(leaveAt).toISOString() : undefined
-      const result = await planJourney(origin, destination, departure, controller.signal, crowdTolerance, [], layaPreference.value, settings.city)
+      const result = await planJourney(origin, destination, departure, controller.signal, crowdTolerance, [], layaPreference.value, settings.city, settings.strictWalking)
       if (controller.signal.aborted) return
       if (result.city !== settings.city) throw new Error('The returned journey belongs to a different city')
       setPlan(result)
@@ -288,6 +303,7 @@ function JourneyPlanner({ settings, onSettingsChange, appSettingsError, cityData
               <p className="hint" role="status">{t('Laya CPU scoring can take tens of seconds while comparing rides.')}</p>
             )}
             <button type="submit" className="primary" disabled={loading || !cityReady}>
+              {loading && slowPlanning && <span className="spinner" aria-hidden="true" />}
               {loading ? t('Planning…') : t('Find calm routes')}
             </button>
           </form>
@@ -308,25 +324,31 @@ function JourneyPlanner({ settings, onSettingsChange, appSettingsError, cityData
                 {plan.laya_enabled && <span className="ai-tag"> · Laya AI</span>}
               </h2>
               {plan.laya_message && <p className="crowd-warning" role="status">{external(plan.laya_message)}</p>}
-              <RouteOptions itineraries={options} selectedId={selectedId} onSelect={(id) => {
+              <RouteOptions key={options.map(it => it.id).join('|')} itineraries={options} selectedId={selectedId} limit={3}
+                onHover={setHoveredId} onSelect={(id) => {
                 dismissAlternatives()
                 setSelectedId(id)
                 setSelectedStop(null)
+                requestAnimationFrame(() => detailsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
               }} />
             </>
           )}
+          <div ref={detailsRef}>
           {selected && <ItineraryDetails key={selected.id} itinerary={selected} realtime={realtime} crowdTolerance={crowdTolerance}
             onAvoidStop={avoidStop} editing={loading} selectedStop={selectedStop} onSelectStop={selectStop}
             editingStop={avoidingStop} stopEditor={plan && avoidingStop ? (
               <StopAlternatives key={`${selected.id}-${selected.legs.findIndex(leg => leg.stops.includes(avoidingStop))}-${avoidingStop.stop_sequence}`}
                 plan={plan} itinerary={selected} stop={avoidingStop} crowdTolerance={crowdTolerance} useLaya={layaPreference.value}
                 onApply={applyAlternative} onClose={dismissAlternatives}
-                onStopsChange={setAlternativeStops} onHoverStop={setHoveredAlternativeStop} />
+                onStopsChange={setAlternativeStops} onHoverStop={setHoveredAlternativeStop}
+                onPreview={setAlternativePreview} onFocus={setFocusPoints} />
             ) : null} />}
+          </div>
           </div>
         </aside>
         <section className="map-panel" aria-label={t('Map')}>
-          <RouteMap key={settings.city} origin={plan?.origin ?? origin} destination={plan?.destination ?? destination} itinerary={selected}
+          <RouteMap key={settings.city} origin={plan?.origin ?? origin} destination={plan?.destination ?? destination} itinerary={avoidingStop ? (alternativePreview ?? selected) : previewed}
+            focusPoints={avoidingStop && !alternativePreview ? focusPoints : null}
             userPosition={position} vehicles={liveVehicles} at={plan?.departure ?? leaveAt} crowdTolerance={crowdTolerance}
             ready={cityReady}
             alternativeStops={avoidingStop ? alternativeStops : []}

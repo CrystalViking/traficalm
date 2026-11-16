@@ -268,3 +268,42 @@ def test_routed_walk_only_option_keeps_departure_time(index, estimator, monkeypa
     assert not walk.rides
     assert walk.departure == holiday
     assert walk.arrival == holiday + timedelta(seconds=7200)
+
+
+def test_strict_walking_keeps_walks_out_of_crowded_areas(index, estimator):
+    flexible = _plan(index, estimator, NEAR_S5)
+    strict = Planner(index, estimator, use_walk_router=False, strict_walking=True).plan(ORIGIN, NEAR_S5, MONDAY_RUSH)
+    assert flexible
+    planner = Planner(index, estimator, use_walk_router=False, strict_walking=True)
+    results = planner.plan(ORIGIN, NEAR_S5, MONDAY_RUSH)
+    assert [it.arrival for it in strict] == [it.arrival for it in results]
+    for it in results:
+        assert not any(planner._hits_zone(leg.geometry) for leg in it.legs if leg.mode == "walk")
+
+
+def test_strict_walk_detours_around_a_crowded_area(index, estimator):
+    from shapely.geometry import Point
+
+    from app.crowd.areas import _xy
+
+    planner = Planner(index, estimator, use_walk_router=False, strict_walking=True)
+    planner._prepare(ORIGIN, NEAR_S5, MONDAY_RUSH, None, frozenset())
+    mid = ((ORIGIN.lat + NEAR_S5.lat) / 2, (ORIGIN.lon + NEAR_S5.lon) / 2)
+    from shapely.prepared import prep
+
+    planner._zone = Point(_xy(*mid, index.city)).buffer(300)
+    planner._zone_prep = prep(planner._zone)
+    straight = Planner(index, estimator, use_walk_router=False)._walk(ORIGIN.lat, ORIGIN.lon, NEAR_S5.lat, NEAR_S5.lon)
+    path = planner._walk(ORIGIN.lat, ORIGIN.lon, NEAR_S5.lat, NEAR_S5.lon)
+    assert planner._hits_zone(list(straight.geometry))
+    assert path is not None and len(path.geometry) > 2
+    assert not planner._hits_zone(list(path.geometry))
+    assert path.distance_m > straight.distance_m
+
+
+def test_strict_plan_replans_and_keeps_public_transport(index, estimator):
+    planner = Planner(index, estimator, use_walk_router=False, strict_walking=True)
+    results = planner.plan_strict(ORIGIN, NEAR_S5, MONDAY_RUSH)
+    assert results
+    assert any(it.rides for it in results)
+    assert [it.crowd_index for it in results] == sorted(it.crowd_index for it in results)

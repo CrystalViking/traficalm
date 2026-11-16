@@ -48,66 +48,104 @@ export function SettingsMenu({ settings, onChange, onClose, crowdTolerance, useL
     <div className="settings-backdrop" onClick={event => { if (event.target === event.currentTarget) onClose() }}>
       <div ref={dialog} className="settings-dialog" role="dialog" aria-modal="true" aria-label={t('Settings')} onKeyDown={handleKey}>
         <h2>{t('Settings')}</h2>
-        <label>{t('City')}
-          <select aria-label={t('City')} value={settings.city} onChange={event => {
-            if (isCity(event.target.value)) onChange({ ...settings, city: event.target.value })
-          }}>
-            {Object.entries(CITIES).map(([value, city]) => <option key={value} value={value}>{city.name}</option>)}
-          </select>
-        </label>
-        <p className="hint">{t('Changing city clears the selected addresses and route. Timetables download automatically on first selection.')}</p>
-        {cityStatus}
-        {settings.city === 'wroclaw' && <p className="hint">{t('Wrocław uses official UM Wrocław / MPK timetables. Its GPS feed cannot identify selected scheduled trips, so live tracking is unavailable.')}</p>}
-        {settings.city === 'warsaw' && <p className="hint">{t('Warsaw uses a community GTFS conversion of ZTM Warszawa data, not an official GTFS API. Selected-trip live tracking is unavailable; timetable forecasts still work.')}</p>}
-        <label>{t('Language')}
-          <select aria-label={t('Language')} value={settings.language} onChange={event => {
-            if (event.target.value === 'en' || event.target.value === 'pl') onChange({ ...settings, language: event.target.value })
-          }}>
-            <option value="en">{t('English')}</option>
-            <option value="pl">{t('Polish')}</option>
-          </select>
-        </label>
-        <label className="laya-setting">
-          <input type="checkbox" checked={settings.gps} onChange={event => onChange({ ...settings, gps: event.target.checked })} />
-          {t('Use GPS')}
-        </label>
-        <p className="hint">{t('Off by default. Enable to show your location and use GPS address buttons.')}</p>
-        <label className="laya-setting">
-          <input type="checkbox" checked={settings.darkMode} onChange={event => onChange({ ...settings, darkMode: event.target.checked })} />
-          {t('Dark Mode')}
-        </label>
-        <label className="radius-setting">{t('Walking distance cap (km)')}
-          <input type="number" min="0.1" max="20" step="0.1" required value={radius} aria-invalid={!radiusValid} onChange={event => {
-            setRadius(event.target.value)
-            const valid = event.target.validity.valid && Number.isFinite(event.target.valueAsNumber)
-            setRadiusValid(valid)
-            if (valid) {
-              onChange({ ...settings, walkRadiusM: Math.round(event.target.valueAsNumber * 1000) })
-            }
-          }} />
-        </label>
-        <input type="range" aria-label={t('Walking distance cap (km)')} min="0.1" max="20" step="0.1"
-          value={settings.walkRadiusM / 1000} onChange={event => {
-            const value = event.target.valueAsNumber
-            setRadius(String(value))
-            setRadiusValid(true)
-            onChange({ ...settings, walkRadiusM: Math.round(value * 1000) })
-          }} />
-        {!radiusValid && <p className="error" role="alert">{t('Enter a radius between 0.1 and 20 km, in steps of 0.1 km.')}</p>}
-        <p className="hint">{t('Nearby-stop search radius, measured in a straight line. Walking can be longer. Applies to new searches.')}</p>
-        <label htmlFor="crowd-tolerance">{t('Crowd tolerance: {value}%', { value: crowdTolerance })}</label>
-        <input id="crowd-tolerance" type="range" min="0" max="100" step="1" value={crowdTolerance}
-          disabled={planning} onChange={event => onToleranceChange(Number(event.target.value))} />
-        <p className="hint">{t('Stops above this level are highlighted. Changing tolerance does not replace your selected route.')}</p>
-        <label className="laya-setting">
-          <input type="checkbox" checked={useLaya} disabled={planning} onChange={event => onLayaChange(event.target.checked)} />
-          {t('Use Laya AI')}
-        </label>
-        <p className="hint">{t('Off by default. Applies to new plans and alternatives; Laya refines ride crowd scores, not live crowd counts or map areas.')}</p>
-        <label className="laya-setting">
-          <input type="checkbox" checked={settings.timeSlider} onChange={event => onChange({ ...settings, timeSlider: event.target.checked })} />
-          {t('Show forecast time slider')}
-        </label>
+        <section className="setting-group" aria-labelledby="settings-route">
+          <h3 id="settings-route">{t('Route planning')}</h3>
+          <div className="setting-item">
+            <label className="setting-row">
+              <span className="setting-title">{t('Walking distance cap (km)')}</span>
+              <input type="number" min="0.1" max="20" step="0.1" required value={radius} aria-invalid={!radiusValid} onChange={event => {
+                setRadius(event.target.value)
+                const valid = event.target.validity.valid && Number.isFinite(event.target.valueAsNumber)
+                setRadiusValid(valid)
+                if (valid) {
+                  onChange({ ...settings, walkRadiusM: Math.round(event.target.valueAsNumber * 1000) })
+                }
+              }} />
+            </label>
+            <input type="range" aria-label={t('Walking distance cap (km)')} min="0.1" max="20" step="0.1"
+              value={settings.walkRadiusM / 1000} onChange={event => {
+                const value = event.target.valueAsNumber
+                setRadius(String(value))
+                setRadiusValid(true)
+                onChange({ ...settings, walkRadiusM: Math.round(value * 1000) })
+              }} />
+            {!radiusValid && <p className="error" role="alert">{t('Enter a radius between 0.1 and 20 km, in steps of 0.1 km.')}</p>}
+            <p className="hint">{t('Nearby-stop search radius, measured in a straight line. Walking can be longer. Applies to new searches.')}</p>
+          </div>
+          <div className="setting-item">
+            <label className="setting-row" htmlFor="crowd-tolerance">
+              <span className="setting-title">{t('Crowd tolerance: {value}%', { value: crowdTolerance })}</span>
+            </label>
+            <input id="crowd-tolerance" type="range" min="0" max="100" step="1" value={crowdTolerance}
+              disabled={planning} onChange={event => onToleranceChange(Number(event.target.value))} />
+            <p className="hint">{t('Stops above this level are highlighted. Changing tolerance does not replace your selected route.')}</p>
+          </div>
+          <div className="setting-item">
+            <label className="setting-row">
+              <span className="setting-title">{t('Walking logic')}</span>
+              <select aria-label={t('Walking logic')} value={settings.strictWalking ? 'strict' : 'flexible'} disabled={planning}
+                onChange={event => onChange({ ...settings, strictWalking: event.target.value === 'strict' })}>
+                <option value="flexible">{t('Flexible')}</option>
+                <option value="strict">{t('Strict')}</option>
+              </select>
+            </label>
+            <p className="hint">{t('Flexible: standard planning. Strict: walking never crosses high or very high crowded areas; routes may be longer or unavailable. Applies to new searches.')}</p>
+          </div>
+          <div className="setting-item">
+            <label className="setting-row">
+              <span className="setting-title">{t('Use Laya AI')}</span>
+              <input type="checkbox" checked={useLaya} disabled={planning} onChange={event => onLayaChange(event.target.checked)} />
+            </label>
+            <p className="hint">{t('Off by default. Applies to new plans and alternatives; Laya refines ride crowd scores, not live crowd counts or map areas.')}</p>
+          </div>
+        </section>
+        <section className="setting-group" aria-labelledby="settings-general">
+          <h3 id="settings-general">{t('General')}</h3>
+          <div className="setting-item">
+            <label className="setting-row">
+              <span className="setting-title">{t('City')}</span>
+              <select aria-label={t('City')} value={settings.city} onChange={event => {
+                if (isCity(event.target.value)) onChange({ ...settings, city: event.target.value })
+              }}>
+                {Object.entries(CITIES).map(([value, city]) => <option key={value} value={value}>{city.name}</option>)}
+              </select>
+            </label>
+            <p className="hint">{t('Changing city clears the selected addresses and route. Timetables download automatically on first selection.')}</p>
+            {cityStatus}
+            {settings.city === 'wroclaw' && <p className="hint">{t('Wrocław uses official UM Wrocław / MPK timetables. Its GPS feed cannot identify selected scheduled trips, so live tracking is unavailable.')}</p>}
+            {settings.city === 'warsaw' && <p className="hint">{t('Warsaw uses a community GTFS conversion of ZTM Warszawa data, not an official GTFS API. Selected-trip live tracking is unavailable; timetable forecasts still work.')}</p>}
+          </div>
+          <div className="setting-item">
+            <label className="setting-row">
+              <span className="setting-title">{t('Language')}</span>
+              <select aria-label={t('Language')} value={settings.language} onChange={event => {
+                if (event.target.value === 'en' || event.target.value === 'pl') onChange({ ...settings, language: event.target.value })
+              }}>
+                <option value="en">{t('English')}</option>
+                <option value="pl">{t('Polish')}</option>
+              </select>
+            </label>
+          </div>
+          <div className="setting-item">
+            <label className="setting-row">
+              <span className="setting-title">{t('Use GPS')}</span>
+              <input type="checkbox" checked={settings.gps} onChange={event => onChange({ ...settings, gps: event.target.checked })} />
+            </label>
+            <p className="hint">{t('Off by default. Enable to show your location and use GPS address buttons.')}</p>
+          </div>
+          <div className="setting-item">
+            <label className="setting-row">
+              <span className="setting-title">{t('Dark Mode')}</span>
+              <input type="checkbox" checked={settings.darkMode} onChange={event => onChange({ ...settings, darkMode: event.target.checked })} />
+            </label>
+          </div>
+          <div className="setting-item">
+            <label className="setting-row">
+              <span className="setting-title">{t('Show forecast time slider')}</span>
+              <input type="checkbox" checked={settings.timeSlider} onChange={event => onChange({ ...settings, timeSlider: event.target.checked })} />
+            </label>
+          </div>
+        </section>
         {errors.map(error => <p key={error} className="error" role="alert">{external(error)}</p>)}
         <button type="button" className="primary" onClick={onClose}>{t('Close settings')}</button>
       </div>

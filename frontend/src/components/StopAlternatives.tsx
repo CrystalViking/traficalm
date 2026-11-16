@@ -4,6 +4,7 @@ import type { Itinerary, NearbyStop, PlanResponse, StopCall } from '../types'
 import { formatDistance } from '../utils/format'
 import { CrowdBadge } from './CrowdBadge'
 import { RouteOptions } from './RouteOptions'
+import { HelpTip } from './HelpTip'
 import { useSettings } from '../settings'
 
 interface Props {
@@ -16,10 +17,12 @@ interface Props {
   onClose: () => void
   onStopsChange: (stops: NearbyStop[]) => void
   onHoverStop: (stopId: string | null) => void
+  onPreview: (itinerary: Itinerary | null) => void
+  onFocus: (points: [number, number][] | null) => void
 }
 
-export function StopAlternatives({ plan, itinerary, stop, crowdTolerance, useLaya, onApply, onClose, onStopsChange, onHoverStop }: Props) {
-  const { t, external, walkRadiusM, city } = useSettings()
+export function StopAlternatives({ plan, itinerary, stop, crowdTolerance, useLaya, onApply, onClose, onStopsChange, onHoverStop, onPreview, onFocus }: Props) {
+  const { t, external, walkRadiusM, city, strictWalking } = useSettings()
   const [exit, setExit] = useState<StopCall | null>(null)
   const [stops, setStops] = useState<NearbyStop[] | null>(null)
   const [boarding, setBoarding] = useState<NearbyStop | null>(null)
@@ -29,8 +32,11 @@ export function StopAlternatives({ plan, itinerary, stop, crowdTolerance, useLay
   const [error, setError] = useState<string | null>(null)
   const [unavailableStop, setUnavailableStop] = useState<string | null>(null)
   const [wholeJourney, setWholeJourney] = useState(false)
+  const [mode, setMode] = useState<'replan' | 'getoff' | null>(null)
+  const [hoverRouteId, setHoverRouteId] = useState<string | null>(null)
   const request = useRef<AbortController | null>(null)
   const panel = useRef<HTMLDivElement>(null)
+  const confirmRef = useRef<HTMLDivElement>(null)
   const selectedRoutes = useRef<HTMLElement>(null)
   const selectedLegIndex = itinerary.legs.findIndex(leg => leg.stops.includes(stop))
   const exits = itinerary.legs.slice(0, selectedLegIndex + 1).flatMap((leg, legIndex) =>
@@ -47,6 +53,35 @@ export function StopAlternatives({ plan, itinerary, stop, crowdTolerance, useLay
   useEffect(() => {
     selectedRoutes.current?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' })
   }, [boarding, result, error])
+
+  const previewId = hoverRouteId ?? candidateId
+  const previewRoute = result?.itineraries.find(route => route.id === previewId) ?? null
+  useEffect(() => {
+    onPreview(previewRoute)
+  }, [previewRoute, onPreview])
+  useEffect(() => () => {
+    onPreview(null)
+    onFocus(null)
+  }, [onPreview, onFocus])
+
+  function chooseMode(next: 'replan' | 'getoff') {
+    if (mode === next) return
+    setMode(next)
+    if (next === 'replan') {
+      onFocus(null)
+      void removeAndReplan()
+      return
+    }
+    request.current?.abort()
+    setResult(null)
+    setCandidateId(null)
+    setHoverRouteId(null)
+    setError(null)
+    setWholeJourney(false)
+    setBusy(null)
+    const preferred = exits[exits.length - 2] ?? exits[exits.length - 1]
+    if (preferred) void chooseExit(preferred.key)
+  }
 
   function startRequest() {
     request.current?.abort()
@@ -65,6 +100,7 @@ export function StopAlternatives({ plan, itinerary, stop, crowdTolerance, useLay
     setStops(null)
     setWholeJourney(false)
     onStopsChange([])
+    onFocus(null)
     onHoverStop(null)
     const chosen = exits.find(choice => choice.key === key)?.stop ?? null
     setExit(chosen)
@@ -78,6 +114,7 @@ export function StopAlternatives({ plan, itinerary, stop, crowdTolerance, useLay
       if (!controller.signal.aborted) {
         setStops(nearby)
         onStopsChange(nearby)
+        onFocus([[chosen.lat, chosen.lon], ...nearby.slice(0, 8).map((s): [number, number] => [s.lat, s.lon])])
       }
     } catch (err) {
       if (!controller.signal.aborted) setError(`Could not load nearby stops: ${err instanceof Error ? err.message : String(err)}`)
@@ -92,7 +129,7 @@ export function StopAlternatives({ plan, itinerary, stop, crowdTolerance, useLay
     setBoarding(chosen)
     setBusy('routes')
     try {
-      const alternatives = await continueJourney(plan, itinerary, exit, chosen, crowdTolerance, excluded, useLaya, controller.signal, walkRadiusM, city)
+      const alternatives = await continueJourney(plan, itinerary, exit, chosen, crowdTolerance, excluded, useLaya, controller.signal, walkRadiusM, city, strictWalking)
       if (!controller.signal.aborted) {
         if (alternatives.itineraries.length) {
           setResult(alternatives)
@@ -123,7 +160,7 @@ export function StopAlternatives({ plan, itinerary, stop, crowdTolerance, useLay
     setBusy('routes')
     try {
       const alternatives = await planJourney(
-        plan.origin, plan.destination, plan.departure, controller.signal, crowdTolerance, excluded, useLaya, city,
+        plan.origin, plan.destination, plan.departure, controller.signal,         crowdTolerance, excluded, useLaya, city, strictWalking,
       )
       if (!controller.signal.aborted) setResult(alternatives)
     } catch (err) {
@@ -141,10 +178,15 @@ export function StopAlternatives({ plan, itinerary, stop, crowdTolerance, useLay
         <>
           {result.itineraries.length ? (
             <>
-              <RouteOptions itineraries={result.itineraries} selectedId={candidateId} onSelect={setCandidateId} showWalkTransfers />
-              <button type="button" className="primary" disabled={!candidateId} onClick={() => {
-                if (candidateId) onApply(result, candidateId)
-              }}>{t('Confirm new route')}</button>
+              <RouteOptions itineraries={result.itineraries} selectedId={candidateId} onHover={setHoverRouteId} onSelect={id => {
+                setCandidateId(id)
+                requestAnimationFrame(() => confirmRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'center' }))
+              }} showWalkTransfers />
+              <div ref={confirmRef} className="confirm-row">
+                <button type="button" className="primary" disabled={!candidateId} onClick={() => {
+                  if (candidateId) onApply(result, candidateId)
+                }}>{t('Confirm new route')}</button>
+              </div>
             </>
           ) : <p role="status">{t('No onward route was found. Choose another stop or exit point; your current route is unchanged.')}</p>}
           {result.laya_message && <p className="crowd-warning" role="status">{external(result.laya_message)}</p>}
@@ -156,27 +198,46 @@ export function StopAlternatives({ plan, itinerary, stop, crowdTolerance, useLay
   return (
     <div ref={panel} className="stop-editor" role="region" aria-label={t('Change route at {stop}', { stop: stop.name })}>
       <h3>{t('Change route at {stop}', { stop: stop.name })}</h3>
-      <p>{t('Your selected route stays unchanged until confirmation. Hover over nearby stops to preview them on the map.')}</p>
-      <button type="button" onClick={removeAndReplan}>{t('Remove stop and replan whole journey')}</button>
-      <p>{t('Or keep the journey up to an exit stop, then walk to another stop and continue.')}</p>
-      <label>
-        {t('Where to get off')}
-        <select aria-label={t('Where to get off')} value={exits.find(choice => choice.stop === exit)?.key ?? ''} onChange={event => void chooseExit(event.target.value)}>
-          <option value="">{t('Choose an exit stop')}</option>
-          {exits.map((choice, index) => (
-            <option key={choice.key} value={choice.key}>
-              {choice.stop === stop ? t('{stop} (selected stop)', { stop: choice.stop.name }) : t('{stop} (before {next})', { stop: choice.stop.name, next: exits[index + 1].stop.name })}
-            </option>
-          ))}
-        </select>
-      </label>
+      <p className="editor-hint">{t('Your selected route stays unchanged until confirmation.')}</p>
+      <div className="mode-picker" role="group" aria-label={t('How do you want to change the route?')}>
+        <div className="mode-option">
+          <button type="button" className="mode-button" aria-pressed={mode === 'replan'} onClick={() => chooseMode('replan')}>
+            {t('Remove stop and replan whole journey')}
+          </button>
+          <HelpTip text={t('Plans the whole journey again without this stop. Often finds a completely different, less crowded route.')} />
+        </div>
+        <div className="mode-option">
+          <button type="button" className="mode-button" aria-pressed={mode === 'getoff'} onClick={() => chooseMode('getoff')}>
+            {t('Get off and continue')}
+          </button>
+          <HelpTip text={t('Keep the journey up to an exit stop, then walk to another stop and continue from there.')} />
+        </div>
+      </div>
+      {mode === 'getoff' && (
+        <div className="exit-picker">
+          <span className="exit-title" id="exit-title">{t('Where to get off')}</span>
+          <div className="exit-list" role="radiogroup" aria-label={t('Where to get off')}>
+            {exits.map((choice, index) => {
+              const label = choice.stop === stop ? t('{stop} (selected stop)', { stop: choice.stop.name }) : t('{stop} (before {next})', { stop: choice.stop.name, next: exits[index + 1].stop.name })
+              return (
+                <button key={choice.key} type="button" role="radio" aria-checked={choice.stop === exit} aria-label={label}
+                  data-exit-key={choice.key} className="exit-choice" onClick={() => void chooseExit(choice.key)}>
+                  <span className="exit-dot" aria-hidden="true" />
+                  <span className="exit-name">{choice.stop.name}</span>
+                  <span className="exit-note">{choice.stop === stop ? t('Selected stop') : t('Before {next}', { next: exits[index + 1].stop.name })}</span>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
       {exit === stop && <p>{t('You will visit this stop to get off; the onward transport will not use it again.')}</p>}
       {busy === 'stops' && <p role="status">{t('Finding stops within {distance}...', { distance: formatDistance(walkRadiusM) })}</p>}
       {error && !boarding && !wholeJourney && <p className="error" role="alert">{external(error)}</p>}
       {unavailableStop && <p role="status">{t('No onward route from {stop}. This stop was removed; choose another stop.', { stop: unavailableStop })}</p>}
       {stops && (
         <>
-          <p>{t('Stops within {distance} of {stop}, nearest first. Distances are straight-line; walking can be longer.', { distance: formatDistance(walkRadiusM), stop: exit?.name ?? '' })}</p>
+          <p className="editor-hint">{t('Stops within {distance} of {stop}, nearest first. Distances are straight-line; walking can be longer.', { distance: formatDistance(walkRadiusM), stop: exit?.name ?? '' })}</p>
           {stops.length === 0 && <p role="status">{unavailableStop
             ? t('No usable nearby stops remain. Choose another exit stop or increase the walking distance cap.')
             : t('No other stops are within {distance}. Choose another exit stop.', { distance: formatDistance(walkRadiusM) })}</p>}
@@ -184,10 +245,15 @@ export function StopAlternatives({ plan, itinerary, stop, crowdTolerance, useLay
             {stops.map(nearby => (
               <li key={nearby.stop_id}>
                 <button type="button" className="nearby-stop" aria-pressed={boarding?.stop_id === nearby.stop_id}
+                  aria-label={`${nearby.name} · ${formatDistance(nearby.distance_m)}`}
                   onMouseEnter={() => onHoverStop(nearby.stop_id)} onMouseLeave={() => onHoverStop(null)}
                   onFocus={() => onHoverStop(nearby.stop_id)} onBlur={() => onHoverStop(null)}
                   onClick={() => void chooseBoarding(nearby)}>
-                  {nearby.name} · {formatDistance(nearby.distance_m)} <CrowdBadge value={nearby.crowd_index} compact />
+                  <span className="nearby-main">
+                    <span className="nearby-name">{nearby.name}</span>
+                    <span className="nearby-distance">🚶 {formatDistance(nearby.distance_m)}</span>
+                  </span>
+                  <CrowdBadge value={nearby.crowd_index} compact />
                 </button>
                 {boarding?.stop_id === nearby.stop_id && (
                   <section ref={selectedRoutes} className="onward-routes" aria-label={t('Routes from {stop}', { stop: nearby.name })}>
@@ -202,7 +268,7 @@ export function StopAlternatives({ plan, itinerary, stop, crowdTolerance, useLay
         </>
       )}
       {wholeJourney && <section aria-label={t('Routes without this stop')}>{routes}</section>}
-      <button type="button" onClick={onClose}>{t('Keep current route')}</button>
+      <button type="button" className="keep-route" onClick={onClose}>{t('Keep current route')}</button>
     </div>
   )
 }

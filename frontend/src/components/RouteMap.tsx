@@ -23,6 +23,7 @@ interface Props {
   ready?: boolean
   alternativeStops?: NearbyStop[]
   hoveredAlternativeStop?: string | null
+  focusPoints?: LatLngTuple[] | null
 }
 
 function useMapControl() {
@@ -258,7 +259,7 @@ function LiveTrackingLegend({ count, loading, errors }: { count: number; loading
   )
 }
 
-export function RouteMap({ origin, destination, itinerary, userPosition, vehicles, at, crowdTolerance, onSelectStop, trackingLoading, trackingErrors, ready = true, alternativeStops = [], hoveredAlternativeStop = null }: Props) {
+export function RouteMap({ origin, destination, itinerary, userPosition, vehicles, at, crowdTolerance, onSelectStop, trackingLoading, trackingErrors, ready = true, alternativeStops = [], hoveredAlternativeStop = null, focusPoints = null }: Props) {
   const { t, language, timeSlider, city } = useSettings()
   const [clock, setClock] = useState(Date.now)
   const [offset, setOffset] = useState({ key: '', minutes: 0 })
@@ -285,7 +286,7 @@ export function RouteMap({ origin, destination, itinerary, userPosition, vehicle
         attribution={`&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> ${t('contributors')}`}
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
       />
-      <FitBounds points={boundsPoints} />
+      <FitBounds points={focusPoints && focusPoints.length > 1 ? focusPoints : boundsPoints} />
       {ready && <CrowdOverlay at={forecastAt} itinerary={itinerary} />}
       {ready && itinerary?.legs.some(leg => leg.mode === 'transit') && <VehiclePredictions at={forecastAt} itinerary={itinerary} />}
       {timeSlider && <TimeSlider at={forecastAt} value={minutes} onChange={value => setOffset({ key: basis, minutes: value })} />}

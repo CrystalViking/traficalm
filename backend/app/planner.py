@@ -15,21 +15,38 @@ from __future__ import annotations
 
 import bisect
 import hashlib
+import heapq
+import math
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
+from shapely import get_parts
+from shapely.geometry import LineString, Point
+from shapely.ops import unary_union
+from shapely.prepared import prep
+
 from .config import get_settings
+from .crowd.areas import _latlon, _xy, collect_samples
 from .crowd.estimator import CrowdEstimator, LegCrowd, itinerary_crowd
 from .geo import distance_to_path_m, haversine_m
 from .realtime import TripUpdate, delay_at_stop
 from .transit_index import RouteInfo, StopInfo, TransitIndex, TripInfo
-from .walking import estimate_walk, route_walk
+from .walking import WalkPath, estimate_walk, route_walk
 
 MAX_WALK_ONLY_M = 2500.0
 DEPARTURES_PER_PATTERN = 2
 AVOID_STOP_RADIUS_M = 100.0
+# Strict walking: crowded areas are avoided on foot, except around the user's own endpoints.
+HIGH_CROWD_INDEX = 50  # lower bound of the "high" crowd level shown in the app
+MAX_WALK_ONLY_M = 2500
+ENDPOINT_EXEMPT_M = 200.0
+DETOUR_MARGIN_M = 15.0
+ROUTED_DETOUR_MARGIN_M = 60.0
+DETOUR_CORRIDOR_M = 1500.0
+MAX_DETOUR_NODES = 150
+ZONE_PAD_DEG = 0.04
 
 
 class InvalidJourneyEdit(ValueError):
@@ -122,14 +139,20 @@ class Planner:
         estimator: CrowdEstimator,
         trip_updates: dict[str, TripUpdate] | None = None,
         use_walk_router: bool = True,
+        strict_walking: bool = False,
     ) -> None:
         self.index = index
         self.crowd = estimator
         self.trip_updates = trip_updates or {}
         self.use_walk_router = use_walk_router
+        self.strict_walking = strict_walking
         self.settings = get_settings()
         self.tz = ZoneInfo(self.settings.timezone)
         self._transfer_cache: dict[str, list[tuple[StopInfo, float]]] = {}
+        self._zone = None
+        self._zone_prep = None
+        self._buffered: dict[float, object] = {}
+        self._walk_cache: dict[tuple, WalkPath | None] = {}
 
     # ------------------------------------------------------------------ helpers
     def _walk_s(self, dist_m: float) -> int:
@@ -149,6 +172,49 @@ class Planner:
         return cached
 
     # ------------------------------------------------------------------ search
+    def plan_strict(
+        self, origin: Place, destination: Place, when: datetime, max_results: int | None = None,
+        crowd_tolerance: int | None = None, avoid_stop_ids: frozenset[str] = frozenset(),
+    ) -> list[Itinerary]:
+        """Plan, then once drop the best route's most crowded stop and replan the whole journey.
+
+        This automates "Avoid stop" followed by "Remove stop and replan".
+        """
+        self.strict_walking = False
+        try:
+            first = self.plan(origin, destination, when, max_results, crowd_tolerance, avoid_stop_ids)
+            if not first:
+                return first
+            walk_stop = self._stop_before_crowded_walk(first[0])
+            merged = {it.id: it for it in first}
+            if walk_stop is not None and walk_stop not in avoid_stop_ids:
+                second = self.plan(
+                    origin, destination, when, max_results, crowd_tolerance, avoid_stop_ids | {walk_stop},
+                )
+                merged.update({it.id: it for it in second})
+        finally:
+            self.strict_walking = True
+
+        ranked = sorted(merged.values(), key=lambda i: (i.crowd_index, i.arrival, i.transfers))
+        # A long walk-only route is not a useful replacement for public transport.
+        ranked = [
+            it for it in ranked
+            if it.rides or sum(leg.distance_m for leg in it.legs) <= MAX_WALK_ONLY_M
+        ] or ranked
+        return ranked[: max_results or self.settings.max_results]
+
+    def _stop_before_crowded_walk(self, it: Itinerary) -> str | None:
+        """Stop where the last walk through a high or very high crowded area starts (or ends, for the access walk)."""
+        for n in range(len(it.legs) - 1, -1, -1):
+            leg = it.legs[n]
+            if leg.mode != "walk" or not self._intersects_zone(leg.geometry):
+                continue
+            if n > 0 and it.legs[n - 1].calls:
+                return it.legs[n - 1].calls[-1].stop.stop_id
+            if n + 1 < len(it.legs) and it.legs[n + 1].calls:
+                return it.legs[n + 1].calls[0].stop.stop_id
+        return None
+
     def plan(
         self, origin: Place, destination: Place, when: datetime, max_results: int | None = None,
         crowd_tolerance: int | None = None, avoid_stop_ids: frozenset[str] = frozenset(),
@@ -236,10 +302,16 @@ class Planner:
         ranked = sorted(ranked, key=lambda i: (i.crowd_index, i.arrival, i.transfers))
         final: list[Itinerary] = []
         for it in ranked:
-            if self.use_walk_router:
-                self._route_walks(it)
+            if self.use_walk_router or self.strict_walking:
+                if not self._route_walks(it):
+                    continue
             if any(a.arrival > b.departure for a, b in zip(it.legs, it.legs[1:])) or it.departure < when:
                 continue
+            if self.strict_walking:
+                if any(self._hits_zone(leg.geometry) for leg in it.legs if leg.mode == "walk"):
+                    continue
+                if any(leg.mode == "walk" and not leg.walk_routed and len(leg.geometry) > 2 for leg in it.legs):
+                    it.notes.append("Walks around very crowded areas; walking geometry is estimated, check local footpaths")
             if self._blocked or boarding_stop_id is not None:
                 # Never advertise a bypass whose walking path still crosses the selected stop.
                 if avoid_stop_areas and any(
@@ -278,6 +350,10 @@ class Planner:
                 for stop, _ in self.index.nearby_stops(selected.lat, selected.lon, AVOID_STOP_RADIUS_M)
             )
         self._transfer_cache.clear()
+        self._zone = None
+        self._zone_prep = None
+        self._buffered.clear()
+        self._walk_cache.clear()
 
     def continue_journey(
         self, origin: Place, destination: Place, when: datetime, prefix_rides: tuple[Ride, ...],
@@ -318,7 +394,7 @@ class Planner:
         )
         bridge.geometry, bridge.walk_routed = list(path.geometry), path.routed
         ready = exit_time + timedelta(seconds=max(path.duration_s, self.settings.min_transfer_seconds))
-        onward_planner = Planner(self.index, self.crowd, self.trip_updates, self.use_walk_router)
+        onward_planner = Planner(self.index, self.crowd, self.trip_updates, self.use_walk_router, self.strict_walking)
         onward = onward_planner.plan(
             board_place, destination, ready, crowd_tolerance=crowd_tolerance,
             avoid_stop_ids=avoid_stop_ids, boarding_stop_id=boarding_stop_id, avoid_stop_areas=False,
@@ -498,15 +574,139 @@ class Planner:
                 out.append(best[1])
         return out
 
+    # ------------------------------------------------------------------ strict walking
+    def _forbidden(self):
+        """Crowd-map areas above the tolerance (metric map projection), minus the user's own endpoints."""
+        if self._zone is None:
+            o, d = self._origin, self._dest
+            lon_pad = ZONE_PAD_DEG * 1.7
+            bounds = (
+                min(o.lat, d.lat) - ZONE_PAD_DEG, min(o.lon, d.lon) - lon_pad,
+                max(o.lat, d.lat) + ZONE_PAD_DEG, max(o.lon, d.lon) + lon_pad,
+            )
+            city = self.index.city
+            samples = collect_samples(self.crowd, self._abs(self._t0), bounds)
+            zone = unary_union([s.footprint for s in samples if s.crowd_index >= HIGH_CROWD_INDEX])
+            for place in (o, d):
+                zone = zone.difference(Point(_xy(place.lat, place.lon, city)).buffer(ENDPOINT_EXEMPT_M))
+            self._zone = zone.buffer(0)
+            self._zone_prep = prep(self._zone)
+        return self._zone
+
+    def _hits_zone(self, points) -> bool:
+        return self.strict_walking and self._intersects_zone(points)
+
+    def _intersects_zone(self, points) -> bool:
+        if len(points) < 2:
+            return False
+        zone = self._forbidden()
+        if zone.is_empty:
+            return False
+        city = self.index.city
+        return bool(self._zone_prep.intersects(LineString([_xy(lat, lon, city) for lat, lon in points])))
+
+    def _detour(self, a: tuple[float, float], b: tuple[float, float], margin: float) -> list[tuple[float, float]] | None:
+        """Shortest walk from a to b around the forbidden zone (A* over the zone's outline), or None."""
+        city = self.index.city
+        pa, pb = _xy(*a, city), _xy(*b, city)
+        direct = math.dist(pa, pb)
+        zone = self._forbidden()
+        near = self._buffered.get(margin)
+        if near is None:
+            near = self._buffered[margin] = zone.buffer(margin)
+        corridor = LineString([pa, pb]).buffer(DETOUR_CORRIDOR_M)
+        obstacles = [p for p in get_parts(near) if p.intersects(corridor)]
+        if not obstacles:
+            return [a, b]
+        simplified = [polygon.simplify(8) for polygon in obstacles if not polygon.is_empty]
+        blocker = unary_union(simplified)
+        blocker_prep = prep(blocker)
+        nodes = [pa, pb]
+        for polygon in get_parts(blocker):
+            nodes += [p for p in polygon.exterior.coords]
+        if len(nodes) > MAX_DETOUR_NODES + 2:
+            line = LineString([pa, pb])
+            nodes = nodes[:2] + sorted(nodes[2:], key=lambda p: line.distance(Point(p)))[:MAX_DETOUR_NODES]
+
+        def clear(p, q) -> bool:
+            seg = LineString([p, q])
+            return not (blocker_prep.crosses(seg) or blocker_prep.contains(seg))
+
+        limit = direct * 3 + 500
+        best = {0: 0.0}
+        parent: dict[int, int] = {}
+        queue = [(direct, 0.0, 0)]
+        done = set()
+        while queue:
+            _, g, i = heapq.heappop(queue)
+            if i in done:
+                continue
+            done.add(i)
+            if i == 1:
+                path = [1]
+                while path[-1] in parent:
+                    path.append(parent[path[-1]])
+                return [a if k == 0 else b if k == 1 else _latlon(*nodes[k], city) for k in reversed(path)]
+            for j, q in enumerate(nodes):
+                if j in done or j == i:
+                    continue
+                step = math.dist(nodes[i], q)
+                cost = g + step
+                if cost >= best.get(j, math.inf) or cost + math.dist(q, pb) > limit or not clear(nodes[i], q):
+                    continue
+                best[j], parent[j] = cost, i
+                heapq.heappush(queue, (cost + math.dist(q, pb), cost, j))
+        return None
+
+    def _walk(self, a_lat: float, a_lon: float, b_lat: float, b_lon: float) -> WalkPath | None:
+        """Estimated walk; with strict walking it goes around crowded areas, or is None when that is impossible."""
+        direct = estimate_walk(a_lat, a_lon, b_lat, b_lon)
+        if not self.strict_walking or direct.distance_m <= 1:
+            return direct
+        key = (round(a_lat, 5), round(a_lon, 5), round(b_lat, 5), round(b_lon, 5))
+        if key not in self._walk_cache:
+            path = None
+            if not self._hits_zone(list(direct.geometry)):
+                path = direct
+            else:
+                around = self._detour((a_lat, a_lon), (b_lat, b_lon), DETOUR_MARGIN_M)
+                if around is not None:
+                    length = sum(haversine_m(*p, *q) for p, q in zip(around, around[1:]))
+                    dist = length * self.settings.walk_detour_factor
+                    path = WalkPath(dist, int(round(dist / self.settings.walk_speed_mps)), tuple(around), False)
+            self._walk_cache[key] = path
+        return self._walk_cache[key]
+
+    def _strict_footpath(self, leg: Leg) -> WalkPath | None:
+        """Routed footpath that stays out of the forbidden zone, falling back to an estimated walk-around."""
+        a, b = (leg.start.lat, leg.start.lon), (leg.end.lat, leg.end.lon)
+        if not self.use_walk_router:
+            return self._walk(*a, *b)
+        direct = route_walk(*a, *b)
+        if not self._hits_zone(list(direct.geometry)):
+            return direct
+        around = self._detour(a, b, ROUTED_DETOUR_MARGIN_M)
+        if around is not None and len(around) > 2:
+            parts = [route_walk(*p, *q) for p, q in zip(around, around[1:])]
+            geometry = [point for part in parts for point in part.geometry]
+            if not self._hits_zone(geometry):
+                return WalkPath(
+                    sum(p.distance_m for p in parts), sum(p.duration_s for p in parts),
+                    tuple(geometry), all(p.routed for p in parts),
+                )
+        return self._walk(*a, *b)
+
     # ------------------------------------------------------------------ itinerary construction
     def build(self, rides: tuple[Ride, ...], crowd_avoiding: bool = False) -> Itinerary | None:
         o, d = self._origin, self._dest
         legs: list[Leg] = []
         notes: list[str] = []
         if not rides:
-            w = estimate_walk(o.lat, o.lon, d.lat, d.lon)
+            w = self._walk(o.lat, o.lon, d.lat, d.lon)
+            if w is None:
+                return None
             dep = self._abs(self._t0)
-            legs.append(self._walk_leg(o, d, dep, dep + timedelta(seconds=w.duration_s), w.distance_m))
+            legs.append(self._walk_leg(o, d, dep, dep + timedelta(seconds=w.duration_s), w.distance_m, w.geometry))
         else:
             prev_place, prev_time = o, None
             for n, ride in enumerate(rides):
@@ -514,7 +714,9 @@ class Planner:
                 board = self.index.stops[trip.stop_ids[ride.board]]
                 board_place = Place(board.lat, board.lon, board.name)
                 dep = self._abs(trip.departures[ride.board] + ride.offset)
-                w = estimate_walk(prev_place.lat, prev_place.lon, board.lat, board.lon)
+                w = self._walk(prev_place.lat, prev_place.lon, board.lat, board.lon)
+                if w is None:
+                    return None
                 if prev_time is None:
                     start = dep - timedelta(seconds=w.duration_s)
                     if start < self._abs(self._t0):
@@ -525,21 +727,27 @@ class Planner:
                     if start + timedelta(seconds=need) > dep:
                         return None
                 if w.distance_m > 1:
-                    legs.append(self._walk_leg(prev_place, board_place, start, start + timedelta(seconds=w.duration_s), w.distance_m))
+                    legs.append(self._walk_leg(prev_place, board_place, start, start + timedelta(seconds=w.duration_s), w.distance_m, w.geometry))
                 leg = self._transit_leg(ride, trip)
                 legs.append(leg)
                 prev_place, prev_time = leg.end, leg.arrival
-            w = estimate_walk(prev_place.lat, prev_place.lon, d.lat, d.lon)
+            w = self._walk(prev_place.lat, prev_place.lon, d.lat, d.lon)
+            if w is None:
+                return None
             if w.distance_m > 1:
-                legs.append(self._walk_leg(prev_place, d, prev_time, prev_time + timedelta(seconds=w.duration_s), w.distance_m))
+                legs.append(self._walk_leg(prev_place, d, prev_time, prev_time + timedelta(seconds=w.duration_s), w.distance_m, w.geometry))
             notes += self._realtime_notes(legs)
         crowd = itinerary_crowd([(leg.crowd, leg.duration_s) for leg in legs])
         return Itinerary(rides, legs, crowd, crowd_avoiding, notes)
 
-    def _walk_leg(self, a: Place, b: Place, dep: datetime, arr: datetime, dist: float) -> Leg:
+    def _walk_leg(
+        self, a: Place, b: Place, dep: datetime, arr: datetime, dist: float,
+        geometry: tuple[tuple[float, float], ...] | None = None,
+    ) -> Leg:
         mid = dep + (arr - dep) / 2
         crowd = self.crowd.walk_leg([(a.lat, a.lon, dep), ((a.lat + b.lat) / 2, (a.lon + b.lon) / 2, mid), (b.lat, b.lon, arr)])
-        return Leg("walk", a, b, dep, arr, dist, [(a.lat, a.lon), (b.lat, b.lon)], crowd)
+        path = list(geometry) if geometry else [(a.lat, a.lon), (b.lat, b.lon)]
+        return Leg("walk", a, b, dep, arr, dist, path, crowd)
 
     def _transit_leg(self, ride: Ride, trip: TripInfo) -> Leg:
         route = self.index.routes.get(trip.route_id)
@@ -599,12 +807,20 @@ class Planner:
                 notes.append(f"Transfer at {b.start.name} is at risk due to real-time delays")
         return notes
 
-    def _route_walks(self, it: Itinerary) -> None:
-        """Replace straight-line walking geometry with OSM footpaths for the final results."""
+    def _route_walks(self, it: Itinerary) -> bool:
+        """Replace straight-line walking geometry with OSM footpaths for the final results.
+
+        With strict walking the footpaths must stay out of crowded areas; returns False when none exists.
+        """
         for n, leg in enumerate(it.legs):
             if leg.mode != "walk" or leg.distance_m < 1:
                 continue
-            path = route_walk(leg.start.lat, leg.start.lon, leg.end.lat, leg.end.lon)
+            if self.strict_walking:
+                path = self._strict_footpath(leg)
+                if path is None:
+                    return False
+            else:
+                path = route_walk(leg.start.lat, leg.start.lon, leg.end.lat, leg.end.lon)
             leg.geometry = list(path.geometry)
             leg.distance_m = path.distance_m
             leg.walk_routed = path.routed
@@ -620,6 +836,7 @@ class Planner:
                 leg.arrival = leg.departure + dur
                 if leg.arrival > it.legs[n + 1].departure:
                     it.notes.append(f"Tight transfer: walking to {leg.end.name} takes about {path.duration_s // 60} min")
+        return True
 
     # ------------------------------------------------------------------ crowd avoidance
     def _avoidance_variants(self, it: Itinerary) -> list[tuple[Ride, ...]]:

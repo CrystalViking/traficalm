@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type { Itinerary } from '../types'
 import { sortByCrowd } from '../utils/sort'
 import { formatDistance, formatDuration, formatTime } from '../utils/format'
@@ -8,6 +9,8 @@ interface Props {
   itineraries: Itinerary[]
   selectedId: string | null
   onSelect: (id: string) => void
+  onHover?: (id: string | null) => void
+  limit?: number
   showWalkTransfers?: boolean
 }
 
@@ -19,20 +22,28 @@ function summary(it: Itinerary): string {
     .join(' → ')
 }
 
-export function RouteOptions({ itineraries, selectedId, onSelect, showWalkTransfers = false }: Props) {
+export function RouteOptions({ itineraries, selectedId, onSelect, onHover, limit, showWalkTransfers = false }: Props) {
   const { t } = useSettings()
+  const [expanded, setExpanded] = useState(false)
   if (itineraries.length === 0) {
     return <p className="hint">{t('No connections found for this time. Try another departure time.')}</p>
   }
+  const sorted = sortByCrowd(itineraries)
+  const collapsed = limit !== undefined && !expanded && sorted.length > limit
+  const visible = collapsed ? sorted.slice(0, limit) : sorted
   return (
-    <ol className="route-options" aria-label={t('Transport options sorted by crowd index (lowest first)')}>
-      {sortByCrowd(itineraries).map((it) => (
+    <>
+    <ol className="route-options" aria-label={t('Transport options sorted by crowd index (lowest first)')} onMouseLeave={() => onHover?.(null)}>
+      {visible.map((it) => (
         <li key={it.id}>
           <button
             type="button"
             className={`route-option${it.id === selectedId ? ' selected' : ''}`}
             aria-pressed={it.id === selectedId}
             onClick={() => onSelect(it.id)}
+            onMouseEnter={() => onHover?.(it.id)}
+            onFocus={() => onHover?.(it.id)}
+            onBlur={() => onHover?.(null)}
           >
             <div className="option-header">
               <CrowdBadge value={it.crowd_index} />
@@ -59,5 +70,11 @@ export function RouteOptions({ itineraries, selectedId, onSelect, showWalkTransf
         </li>
       ))}
     </ol>
+    {limit !== undefined && sorted.length > limit && (
+      <button type="button" className="show-more" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
+        {expanded ? t('Show fewer options') : t('Show all {count} options', { count: sorted.length })}
+      </button>
+    )}
+    </>
   )
 }
